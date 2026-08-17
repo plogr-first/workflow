@@ -1,12 +1,13 @@
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory)][ValidateSet('claude','opencode','gemini','codex')][string]$Kind,
+  [string]$Kind,
   [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9_-]{0,31}$')][string]$Name,
   [Parameter(Mandatory)][ValidateSet('research','task','bugfix')][string]$Category,
   [Parameter(Mandatory)][ValidatePattern('^[a-z0-9]+(?:-[a-z0-9]+)*$')][string]$Slug,
   [Parameter(Mandatory)][string]$Prompt,
   [ValidateSet('full','plan')][string]$Access = 'full',
   [string]$OpenCodeModel,
+  [ValidateSet('task','verification')][string]$Profile,
   [string]$ProjectRoot = (Get-Location).Path,
   [ValidateSet('right','down')][string]$Direction = 'right'
 )
@@ -41,15 +42,36 @@ function Start-AgentWhenPaneReady([string]$Pane,[string[]]$NativeArgs) {
   } while ((Get-Date) -lt $deadline)
   throw "New pane $Pane did not become an available shell within 20 seconds."
 }if ($env:HERDR_ENV -ne '1') { throw 'HERDR_ENV is not 1. Run this from a Herdr-managed pane.' }
-if ($Kind -ne 'opencode' -and $OpenCodeModel) { throw '-OpenCodeModel is valid only for -Kind opencode.' }
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
-$nativeArgs = @()
-switch ($Kind) {
-  'claude' { if($Access -eq 'full'){$nativeArgs+='--dangerously-skip-permissions'}else{$nativeArgs+=@('--permission-mode','plan')} }
-  'gemini' { if($Access -eq 'full'){$nativeArgs+='--yolo'}else{$nativeArgs+=@('--approval-mode','plan')} }
-  'codex' { if($Access -eq 'full'){$nativeArgs+='--dangerously-bypass-approvals-and-sandbox'}else{$nativeArgs+=@('-s','workspace-write','-a','on-request')} }
-  'opencode' { if($Access -eq 'full'){$nativeArgs+='--auto'}; if($OpenCodeModel){$OpenCodeModel=Resolve-OpenCodeModel $OpenCodeModel;$nativeArgs+=@('-m',$OpenCodeModel)} }
+$profileNativeArgs = @()
+if ($Profile) {
+  if ($Kind) { throw 'Use either -Kind or -Profile, not both.' }
+  $profilePath = Join-Path $project 'herdr\dispatch-profile.json'
+  if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw "Herdr dispatch profile not found: $profilePath. Run 'herdr init' from the project root first." }
+  try { $dispatchProfile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json } catch { throw "Invalid Herdr dispatch profile: $profilePath" }
+  $entry = if ($Profile -eq 'task') { $dispatchProfile.task_agent } else { $dispatchProfile.verification_agent }
+  if (-not $entry -or -not $entry.kind) { throw "Profile '$Profile' is incomplete in $profilePath." }
+  $Kind = [string]$entry.kind
+  if ($entry.model) { $OpenCodeModel = [string]$entry.model }
+  $profileNativeArgs = @($entry.full_access_args | ForEach-Object { [string]$_ } | Where-Object { $_ })
 }
+if (-not $Kind) { throw 'Specify -Kind or -Profile task|verification.' }
+$Kind = $Kind.Trim().ToLowerInvariant()
+if ($Kind -notmatch '^[a-z][a-z0-9_-]{0,31}$') { throw "Invalid Herdr agent kind '$Kind'." }
+if ($Kind -ne 'opencode' -and $OpenCodeModel) { throw '-OpenCodeModel is valid only for an opencode profile or -Kind opencode.' }
+$nativeArgs = @()
+if ($Access -eq 'full' -and $profileNativeArgs.Count) {
+  $nativeArgs += $profileNativeArgs
+} else {
+  switch ($Kind) {
+    'claude' { if($Access -eq 'full'){$nativeArgs+='--dangerously-skip-permissions'}else{$nativeArgs+=@('--permission-mode','plan')} }
+    'gemini' { if($Access -eq 'full'){$nativeArgs+='--yolo'}else{$nativeArgs+=@('--approval-mode','plan')} }
+    'codex' { if($Access -eq 'full'){$nativeArgs+='--dangerously-bypass-approvals-and-sandbox'}else{$nativeArgs+=@('-s','workspace-write','-a','on-request')} }
+    'opencode' { if($Access -eq 'full'){$nativeArgs+='--auto'} }
+    default { if($Access -eq 'full'){throw "Custom Herdr kind '$Kind' requires a project profile with full_access_args. Run 'herdr init'."}else{throw "Plan mode is not defined for custom Herdr kind '$Kind'."} }
+  }
+}
+if ($Kind -eq 'opencode' -and $OpenCodeModel) { $OpenCodeModel=Resolve-OpenCodeModel $OpenCodeModel; $nativeArgs+=@('-m',$OpenCodeModel) }
 $date=Get-Date -Format 'yyyy-MM-dd';$stamp=Get-Date -Format 'HHmmss';$handoff=Join-Path $project "herdr\$Category\$date\$stamp--$Name--$Slug";New-Item -ItemType Directory -Force -Path $handoff|Out-Null
 $resultPath=Join-Path $handoff 'result.md';$briefPath=Join-Path $handoff 'brief.md';$statusPath=Join-Path $handoff 'status.json';$pane=$null;$agent=$null
 try {

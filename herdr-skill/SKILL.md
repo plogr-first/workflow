@@ -13,7 +13,42 @@ description: "Use when the user explicitly invokes /herdr or asks to launch, coo
 
 将 `/herdr` 视为 Herdr 的通用、快速子 Agent 入口。适用于调研、实现任务、修复 bug 与验收。**先读取并遵守 [Herdr 核心控制规则](references/herdr-core.md)**；本 Skill 只在其基础上补充快速派遣、完全访问配置、交接与回收。随后运行 `scripts/Start-HerdrAgent.ps1`；不要手拼 pane ID 或靠 UI 焦点猜测目标。
 
-## 0. 前置检查
+## 0. 项目初始化：`herdr init`
+
+首次在某个项目中使用 Herdr 派遣时，从项目根目录运行：
+
+```powershell
+herdr init
+```
+
+该命令由本 Skill 安装的兼容包装器提供；除 `init` 外的全部 `herdr` 参数都会透明转发给官方 `herdr.exe`。初始化器依次选择并校验：
+
+1. **任务 Agent**：`claude`、`gemini`、`codex`、`opencode` 或自定义 Herdr 支持 kind；
+2. **校验 Agent**：同一套选择；
+3. OpenCode 的每一次选择都会从实时 `opencode models` 输出中选择模型；
+4. 所有内置 Agent 使用已验证的完全访问参数。自定义 kind 必须同时是当前 Herdr 支持 kind、在 PATH 中有同名可执行文件，且由用户提供其完全访问启动参数；不得猜测第三方 Agent 的危险模式参数。
+
+初始化会写入：
+
+```text
+<project>\herdr\dispatch-profile.json
+```
+
+然后自动执行：
+
+```powershell
+npx skills@latest add mattpocock/skills
+```
+
+使用配置的默认任务/校验 Agent 时，调用派遣脚本时传入 `-Profile task` 或 `-Profile verification`，而不是手写 `-Kind`；用户显式给出的 `-Kind`/模型优先于项目配置。安装包装器只需执行一次：
+
+```powershell
+& 'C:\Users\Lenovo\.codex\skills\herdr\scripts\Install-HerdrInitCommand.ps1'
+```
+
+它在用户级 PATH 前置 `C:\Users\Lenovo\.local\bin`，新开的终端即可使用 `herdr init`。不要覆盖官方 `herdr.exe`。
+
+## 0.5 前置检查（派遣）
 
 1. 确认 `$env:HERDR_ENV -eq '1'`；不满足则停止。
 2. 运行 `herdr agent`，仅使用当前 CLI 列出的 kind。
@@ -51,6 +86,12 @@ description: "Use when the user explicitly invokes /herdr or asks to launch, coo
 使用脚本。它创建交接目录、分割当前 pane、以 `--no-focus` 启动 Agent、写入 brief/status，并下发“写 result.md + Herdr 通知”的任务。脚本不会等待完成，因此不需要持续盯 pane。
 
 ```powershell
+# 使用 `herdr init` 写入的项目任务 Agent
+& 'C:\Users\Lenovo\.codex\skills\herdr\scripts\Start-HerdrAgent.ps1' `
+  -Profile task -Name audit_api -Category research -Slug api-contract `
+  -Prompt '只读审计当前 API 合同与实现差异。'
+
+# 显式覆盖项目配置
 & 'C:\Users\Lenovo\.codex\skills\herdr\scripts\Start-HerdrAgent.ps1' `
   -Kind opencode -Name audit_api -Category research -Slug api-contract `
   -Prompt '只读审计当前 API 合同与实现差异。' `

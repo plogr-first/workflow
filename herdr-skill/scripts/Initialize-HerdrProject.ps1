@@ -127,7 +127,7 @@ function Get-MattpockSkills([string]$Project) {
   }
   return $out
 }
-function Get-GitSetup([string]$Project, [bool]$AllowInit, [string]$RequestedPolicy, [string]$RequestedRemote) {
+function Get-GitSetup([string]$Project, [bool]$AllowInit, [string]$RequestedPolicy, [string]$RequestedRemote, [bool]$Interactive) {
   $inside = (& git -C $Project rev-parse --is-inside-work-tree 2>$null)
   $initialized = $false
   if ($LASTEXITCODE -ne 0 -or $inside -ne 'true') {
@@ -143,11 +143,16 @@ function Get-GitSetup([string]$Project, [bool]$AllowInit, [string]$RequestedPoli
   $hasCommit = ((& git -C $Project rev-parse --verify HEAD 2>$null) -and $LASTEXITCODE -eq 0)
   $remotes = @((& git -C $Project remote 2>$null) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
   $policy = if($RequestedPolicy){$RequestedPolicy}else{'manual'}; $remote = $RequestedRemote
-  if (-not $RequestedPolicy -and $remotes.Count -eq 1) {
+  if (-not $RequestedPolicy -and $Interactive -and $remotes.Count -gt 0) {
     Write-Host ''
-    Write-Host "Git remote detected: $($remotes[0])"
-    $choice = Read-Host 'Push this project after every successful merge? [Y/n]'
-    if ([string]::IsNullOrWhiteSpace($choice) -or $choice -match '^[Yy]') { $policy='after_merge'; $remote=$remotes[0] }
+    Write-Host 'Post-merge push policy:'
+    Write-Host '  0) Keep merges local (manual push)'
+    for($i=0;$i -lt $remotes.Count;$i++){Write-Host ('  {0}) Push after merge to {1}' -f ($i+1),$remotes[$i])}
+    $choice=Read-Host 'Choice [0]'; $index=0
+    if(-not [string]::IsNullOrWhiteSpace($choice)){
+      if(-not ([int]::TryParse($choice,[ref]$index) -and $index -ge 0 -and $index -le $remotes.Count)){throw 'Invalid post-merge push selection.'}
+      if($index -gt 0){$policy='after_merge';$remote=$remotes[$index-1]}
+    }
   }
   if ($policy -eq 'after_merge') {
     if (-not $remote) { if($remotes.Count -eq 1){$remote=$remotes[0]}else{throw 'Push policy after_merge requires -PushRemote or exactly one configured git remote.'} }
@@ -216,7 +221,8 @@ function Select-Agent([string]$Role, [string]$RequestedKind, [string]$RequestedM
 }
 
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
-$git = Get-GitSetup $project (-not $SkipGitInit) $PushPolicy $PushRemote
+$interactiveSetup = [string]::IsNullOrWhiteSpace($TaskKind) -or [string]::IsNullOrWhiteSpace($VerificationKind) -or [string]::IsNullOrWhiteSpace($ResearchKind)
+$git = Get-GitSetup $project (-not $SkipGitInit) $PushPolicy $PushRemote $interactiveSetup
 $session = Select-HerdrSession $HerdrSessionName
 $supportedKinds = Get-SupportedKinds
 $task = Select-Agent 'task' $TaskKind $TaskOpenCodeModel $TaskFullAccessArgs $supportedKinds

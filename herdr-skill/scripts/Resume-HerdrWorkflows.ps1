@@ -3,9 +3,11 @@ param(
   [string]$WorkflowId,
   [string]$ProjectRoot = (Get-Location).Path,
   [switch]$All,
-  [string]$SessionName
+  [string]$SessionName,
+  [switch]$FromBash
 )
 $ErrorActionPreference = 'Stop'
+if ($FromBash) { $env:HERDR_ENV='1' }
 if ($env:HERDR_ENV -ne '1') { throw 'HERDR_ENV is not 1. Run herdr resume from a Herdr-managed pane.' }
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $profilePath = Join-Path $project 'herdr\dispatch-profile.json'

@@ -45,6 +45,13 @@ function Get-OpenCodeModels {
   if (-not $models.Count) { throw "Unable to obtain models from 'opencode models'." }
   return $models
 }
+function Resolve-OpenCodeModel([string]$Requested, [string[]]$Models) {
+  $aliases = @{ 'zen'='opencode/deepseek-v4-flash-free'; 'zen-free'='opencode/deepseek-v4-flash-free'; 'deepseek-v4-flash-free'='opencode/deepseek-v4-flash-free'; 'go'='opencode-go/deepseek-v4-flash'; 'go-flash'='opencode-go/deepseek-v4-flash'; 'deepseek-v4-flash'='opencode-go/deepseek-v4-flash' }
+  $key = $Requested.Trim().ToLowerInvariant(); if($aliases.ContainsKey($key)){$key=$aliases[$key]}
+  $exact=@($Models|Where-Object{$_.Equals($key,[StringComparison]::OrdinalIgnoreCase)}); if($exact.Count -eq 1){return $exact[0]}
+  $normal=$key -replace '[^a-z0-9]',''; $fuzzy=@($Models|Where-Object{(($_ -replace '[^a-z0-9]','').ToLowerInvariant()).Contains($normal)})
+  if($fuzzy.Count -eq 1){return $fuzzy[0]}; if($fuzzy.Count -gt 1){throw "OpenCode model '$Requested' is ambiguous: $($fuzzy -join ', ')"}; throw "OpenCode model '$Requested' is not currently available."
+}
 function Get-HerdrSessions {
   $raw = @(& herdr session list --json 2>&1)
   if ($LASTEXITCODE -ne 0) { throw "Unable to list Herdr sessions: $($raw -join ' ')" }
@@ -143,9 +150,8 @@ function Select-Agent([string]$Role, [string]$RequestedKind, [string]$RequestedM
       $modelChoice = Read-Host 'Model number or exact model ID'
       $index = 0
       if ([int]::TryParse($modelChoice, [ref]$index) -and $index -ge 1 -and $index -le $models.Count) { $model = $models[$index - 1] }
-      else { $model = @($models | Where-Object { $_.Equals($modelChoice, [StringComparison]::OrdinalIgnoreCase) }) | Select-Object -First 1 }
-    } else { $model = @($models | Where-Object { $_.Equals($RequestedModel, [StringComparison]::OrdinalIgnoreCase) }) | Select-Object -First 1 }
-    if (-not $model) { throw "OpenCode model '$RequestedModel' is not currently available." }
+      else { $model = Resolve-OpenCodeModel $modelChoice $models }
+    } else { $model = Resolve-OpenCodeModel $RequestedModel $models }
   }
   return [ordered]@{
     kind = $kind

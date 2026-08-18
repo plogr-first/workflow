@@ -28,6 +28,8 @@ Use `Start-HerdrAgent.ps1` only for a one-off Agent operation that does not requ
 
 After a Herdr or computer restart, run `herdr resume` from the project root inside a Herdr-managed pane. The project profile binds workflows to one named Herdr session; the resume controller scans only that session and project. If more than one workflow is resumable, it lists them; resume one explicitly with `herdr resume <workflow-id>` or intentionally use `herdr resume --all`.
 
+`herdr --session <name> resume [workflow-id]` is equivalent but rejects a session that differs from the project binding.
+
 Resume reads persisted `workflow.json`, `events.jsonl`, handoffs, Git/worktree state, and the configured mattpocock skill manifest. It wakes the persisted `next_role` (`task` or `verification`), starts a replacement Agent when the recorded Agent is gone, and never guesses across sessions. It must not resume terminal `merged`, `passed`, or `blocked` workflows.
 
 - `research`: use the research profile; require primary evidence and read-only work.

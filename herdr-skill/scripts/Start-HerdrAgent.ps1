@@ -132,7 +132,7 @@ Do not report completion only in the TUI.
   $watchPid=$null
   if(-not $DeferActivation){
     $message="Read $briefPath. You are $Name. Follow the workflow role contract exactly; reopen the brief at every phase boundary. Before completion write $resultPath and $outcomePath, then send the exact Herdr completion notification. A TUI reply alone is invalid. Final reply: summary plus result path only."
-    if($Kind -eq 'opencode'){Start-Sleep -Seconds 10;Invoke-HerdrJson @('pane','send-text',$pane,$message);Invoke-HerdrJson @('pane','send-keys',$pane,'enter')}else{Invoke-HerdrJson @('agent','prompt',$Name,$message)|Out-Null}
+    if($Kind -eq 'opencode'){Start-Sleep -Seconds 10;Invoke-HerdrJson @('pane','send-text',$pane,$message)|Out-Null;Invoke-HerdrJson @('pane','send-keys',$pane,'enter')|Out-Null}else{Invoke-HerdrJson @('agent','prompt',$Name,$message)|Out-Null}
     $watcher=Join-Path $PSScriptRoot 'Watch-HerdrHandoff.ps1';$watchArgs="-NoProfile -ExecutionPolicy Bypass -File `"$watcher`" -AgentName `"$Name`" -StatusPath `"$statusPath`" -OutcomePath `"$outcomePath`"";$watch=Start-Process -FilePath powershell.exe -ArgumentList $watchArgs -WindowStyle Hidden -PassThru;$watchPid=$watch.Id
   }
   [pscustomobject]@{name=$Name;pane_id=$pane;handoff=$handoff;brief=$briefPath;result=$resultPath;outcome=$outcomePath;progress=$progressPath;status=$statusPath;watcher_pid=$watchPid;deferred=[bool]$DeferActivation}|ConvertTo-Json -Depth 4

@@ -23,6 +23,7 @@ if /I "%~1"=="init" (
   exit /b %ERRORLEVEL%
 )
 if /I "%~1"=="resume" goto :resume
+if /I "%~1"=="--session" if /I "%~3"=="resume" goto :resume_session
 "$herdrExe" %*
 exit /b %ERRORLEVEL%
 :inithelp
@@ -45,6 +46,12 @@ if /I "%~2"=="--all" (
   where pwsh.exe >nul 2>&1
   if not errorlevel 1 (pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$resumer" -WorkflowId "%~2" %3 %4 %5 %6 %7 %8 %9) else (powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$resumer" -WorkflowId "%~2" %3 %4 %5 %6 %7 %8 %9)
 )
+exit /b %ERRORLEVEL%
+:resume_session
+if /I "%~4"=="--help" goto :resumehelp
+if /I "%~4"=="-h" goto :resumehelp
+where pwsh.exe >nul 2>&1
+if not errorlevel 1 (pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$resumer" -SessionName "%~2" -WorkflowId "%~4" %5 %6 %7 %8 %9) else (powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$resumer" -SessionName "%~2" -WorkflowId "%~4" %5 %6 %7 %8 %9)
 exit /b %ERRORLEVEL%
 "@
 Set-Content -LiteralPath $wrapper -Value $cmd -Encoding ascii
@@ -76,9 +83,17 @@ if [ "`${1:-}" = "resume" ]; then
     exit 0
   fi
   if command -v pwsh.exe >/dev/null 2>&1; then
-    exec pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "`$resumer" "`$@"
+    exec pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "`$resumer" -FromBash "`$@"
   fi
-  exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "`$resumer" "`$@"
+  exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "`$resumer" -FromBash "`$@"
+fi
+if [ "`${1:-}" = "--session" ] && [ "`${3:-}" = "resume" ]; then
+  session="`${2}"
+  shift 3
+  if command -v pwsh.exe >/dev/null 2>&1; then
+    exec pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "`$resumer" -FromBash -SessionName "`$session" "`$@"
+  fi
+  exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "`$resumer" -FromBash -SessionName "`$session" "`$@"
 fi
 exec "`$herdr_exe" "`$@"
 "@

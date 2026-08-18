@@ -42,6 +42,9 @@ function Prompt-Agent([string]$Name, [string]$Message) {
   & herdr @prefix agent prompt $Name $Message | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Unable to prompt Agent '$Name' in Herdr session '$script:Session'." }
 }
+function Agent-Live([string]$Name) {
+  try { $old=$ErrorActionPreference; $ErrorActionPreference='Continue'; & herdr @('--session',$script:Session) agent get $Name 2>$null | Out-Null; $code=$LASTEXITCODE; $ErrorActionPreference=$old; return ($code -eq 0) } catch { $ErrorActionPreference=$old; return $false }
+}
 function Acquire-Lease {
   if (Test-Path $lockPath) {
     try { $old = Get-Content $lockPath -Raw | ConvertFrom-Json; if(([datetime]$old.lease_expires_at) -gt (Get-Date)){ return $false } } catch { }
@@ -57,12 +60,18 @@ try {
   $workflow = Read-Workflow; $script:Session = [string]$workflow.session_name
   if ([string]::IsNullOrWhiteSpace($script:Session)) { throw 'workflow.json is missing session_name.' }
   $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+  $missingTaskTicks=0; $missingVerifierTicks=0
   do {
     Renew-Lease; $workflow = Read-Workflow
     if (@('merged','passed','blocked') -contains [string]$workflow.state) { break }
     $taskOutcomePath=[string]$workflow.task.outcome; $verOutcomePath=[string]$workflow.verifier.outcome
     $taskOutcome=Read-Outcome $taskOutcomePath; $verOutcome=Read-Outcome $verOutcomePath
     $taskHash=OutcomeHash $taskOutcomePath; $verHash=OutcomeHash $verOutcomePath
+    if ($workflow.next_role -eq 'task' -and -not (Agent-Live ([string]$workflow.task.name))) { $missingTaskTicks++ } else { $missingTaskTicks=0 }
+    if ($workflow.next_role -eq 'verification' -and -not (Agent-Live ([string]$workflow.verifier.name))) { $missingVerifierTicks++ } else { $missingVerifierTicks=0 }
+    if ($missingTaskTicks -ge 3 -or $missingVerifierTicks -ge 3) {
+      $missingRole=if($missingTaskTicks -ge 3){'task'}else{'verification'}; Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='agent_unavailable';role=$missingRole}; Notify "Herdr: $missingRole Agent 不可用，工作流已阻塞" $workflowPath 'request'; break
+    }
     if ($taskOutcome -and $taskOutcome.state -eq 'blocked') {
       Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='task_agent_blocked'}; Notify "Herdr: $($workflow.task.name) 已阻塞" ([string]$workflow.task.result) 'request'; break
     } elseif ($workflow.next_role -eq 'verification' -and $taskOutcome -and $taskOutcome.state -eq 'candidate' -and $workflow.last_processed.task_outcome_hash -ne $taskHash) {
@@ -84,4 +93,7 @@ try {
     Start-Sleep -Seconds $PollSeconds
   } while ((Get-Date) -lt $deadline)
   if ((Get-Date) -ge $deadline -and -not (@('merged','passed','blocked') -contains [string](Read-Workflow).state)) { $workflow=Read-Workflow;Save-State $workflow 'blocked' '';Append-Event 'workflow_timeout' @{};Notify 'Herdr: 工作流超时' $workflowPath 'request' }
+} catch {
+  try { $failed=Read-Workflow; $failed | Add-Member -Force -NotePropertyName blocked_reason -NotePropertyValue $_.Exception.Message; Save-State $failed 'blocked' ''; Append-Event 'workflow_blocked' @{reason='controller_error'}; Notify 'Herdr: 工作流控制器异常，已阻塞' $workflowPath 'request' } catch { }
+  throw
 } finally { Release-Lease }

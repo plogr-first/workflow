@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-  [string]$ProjectRoot = (Get-Location).Path,
   [string]$WorkflowId,
+  [string]$ProjectRoot = (Get-Location).Path,
   [switch]$All,
   [string]$SessionName
 )
@@ -23,18 +23,24 @@ if ($items.Count -gt 1 -and -not $All) {
 }
 function Save-Workflow($Workflow,[string]$Path) { $tmp="$Path.$([guid]::NewGuid().ToString('N')).tmp"; $Workflow.updated_at=(Get-Date -Format o); $Workflow|ConvertTo-Json -Depth 20|Set-Content $tmp -Encoding utf8; Move-Item $tmp $Path -Force }
 function Event([string]$Path,[string]$Name,[hashtable]$Fields=@{}) { $e=[ordered]@{at=(Get-Date -Format o);event=$Name};foreach($k in $Fields.Keys){$e[$k]=$Fields[$k]};($e|ConvertTo-Json -Compress)|Add-Content (Join-Path (Split-Path $Path) 'events.jsonl') -Encoding utf8 }
-function Agent-Live([string]$Name) { & herdr --session $session agent get $Name 2>$null | Out-Null; return ($LASTEXITCODE -eq 0) }
+function Agent-Live([string]$Name) {
+  try { $old=$ErrorActionPreference; $ErrorActionPreference='Continue'; & herdr --session $session agent get $Name 2>$null | Out-Null; $code=$LASTEXITCODE; $ErrorActionPreference=$old; return ($code -eq 0) } catch { $ErrorActionPreference=$old; return $false }
+}
 function Ensure-Agent($Workflow,[string]$Role,[string]$WorkflowPath) {
   $entry = if($Role -eq 'task'){$Workflow.task}else{$Workflow.verifier}; $name=[string]$entry.name
   if (Agent-Live $name) { return }
   $generation = 1; if($name -match '-r(\d+)$'){$generation=[int]$Matches[1]+1}
-  $newName = "$name-r$generation"; if($newName.Length -gt 32){$newName=$newName.Substring(0,32)}
+  $suffix = "-r$generation"; $base = $name
+  if (($base.Length + $suffix.Length) -gt 32) { $base = $base.Substring(0, [Math]::Max(1, 32 - $suffix.Length)) }
+  $newName = "$base$suffix"
   $category=[string]$Workflow.mode; $profileName=if($Role -eq 'task'){if($category -eq 'research'){'research'}else{'task'}}else{'verification'}
   $recovery = "This is a post-reboot replacement for workflow $($Workflow.workflow_id). Read the existing handoff files: $($Workflow.task.result), $($Workflow.task.outcome), $($Workflow.verifier.result), $($Workflow.verifier.outcome), and the workflow file $WorkflowPath. Read progress.md/progress.json if present. Continue only the role '$Role' using the configured mattpocock skills. Preserve the existing worktree and scope. Write the role's result and outcome files when complete."
-  $launcher=Join-Path $PSScriptRoot 'Start-HerdrAgent.ps1'; $args=@('-Profile',$profileName,'-Name',$newName,'-Category',$category,'-Slug',([string]$Workflow.slug),'-Prompt',$recovery,'-ProjectRoot',$project); if($Role -eq 'verification'){$args += '-DeferActivation'}
-  $replacement=& $launcher @args | ConvertFrom-Json
+  $launcher=Join-Path $PSScriptRoot 'Start-HerdrAgent.ps1'; $launchParams=@{Profile=$profileName;Name=$newName;Category=$category;Slug=([string]$Workflow.slug);Prompt=$recovery;ProjectRoot=$project}; if($Role -eq 'verification'){$launchParams.DeferActivation=$true}
+  try { $replacement=& $launcher @launchParams | ConvertFrom-Json } catch {
+    $Workflow.state='blocked'; $Workflow.next_role=''; $Workflow | Add-Member -Force -NotePropertyName blocked_reason -NotePropertyValue ("replacement $Role Agent failed: " + $_.Exception.Message); Save-Workflow $Workflow $WorkflowPath; Event $WorkflowPath 'workflow_blocked' @{reason='replacement_agent_failed';role=$Role}; throw
+  }
   if(-not $replacement.name){throw "Failed to start replacement $Role Agent '$newName'."}
-  $entry.name=$replacement.name; $entry.active_agent_name=$replacement.name; $entry.handoff=$replacement.handoff; $entry.result=$replacement.result; $entry.outcome=$replacement.outcome; $entry.status=$replacement.status
+  $entry.name=$replacement.name; $entry.active_agent_name=$replacement.name; $entry.pane_id=$replacement.pane_id; $entry.handoff=$replacement.handoff; $entry.brief=$replacement.brief; $entry.result=$replacement.result; $entry.outcome=$replacement.outcome; $entry.progress=$replacement.progress; $entry.status=$replacement.status
   if($Role -eq 'task'){$Workflow.task=$entry}else{$Workflow.verifier=$entry}; Save-Workflow $Workflow $WorkflowPath; Event $WorkflowPath 'agent_restarted_after_reboot' @{role=$Role;agent=$replacement.name}
 }
 foreach($wf in $items) {

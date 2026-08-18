@@ -18,7 +18,8 @@ if /I "%~1"=="init" (
   if /I "%~2"=="--help" goto :inithelp
   if /I "%~2"=="-h" goto :inithelp
   shift
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$initializer" %*
+  where pwsh.exe >nul 2>&1
+  if not errorlevel 1 (pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$initializer" %*) else (powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$initializer" %*)
   exit /b %ERRORLEVEL%
 )
 if /I "%~1"=="resume" goto :resume
@@ -37,7 +38,13 @@ exit /b 0
 :resume
 if /I "%~2"=="--help" goto :resumehelp
 if /I "%~2"=="-h" goto :resumehelp
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$resumer" %2 %3 %4 %5 %6 %7 %8 %9
+if /I "%~2"=="--all" (
+  where pwsh.exe >nul 2>&1
+  if not errorlevel 1 (pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$resumer" -All %3 %4 %5 %6 %7 %8 %9) else (powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$resumer" -All %3 %4 %5 %6 %7 %8 %9)
+) else (
+  where pwsh.exe >nul 2>&1
+  if not errorlevel 1 (pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$resumer" -WorkflowId "%~2" %3 %4 %5 %6 %7 %8 %9) else (powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$resumer" -WorkflowId "%~2" %3 %4 %5 %6 %7 %8 %9)
+)
 exit /b %ERRORLEVEL%
 "@
 Set-Content -LiteralPath $wrapper -Value $cmd -Encoding ascii

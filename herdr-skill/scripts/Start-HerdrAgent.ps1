@@ -38,7 +38,7 @@ function Start-AgentWhenPaneReady([string]$Pane,[string[]]$NativeArgs) {
     $command = @('agent','start',$Name,'--kind',$Kind,'--pane',$Pane,'--timeout','60000')
     if ($NativeArgs.Count) { $command += '--'; $command += $NativeArgs }
     $attempt = Invoke-HerdrJson $command
-    if ($attempt.exit -eq 0 -and $attempt.json.result.agent.interactive_ready -and $attempt.json.result.agent.agent -eq $Kind) { return $attempt.json.result.agent }
+    if ($attempt.exit -eq 0 -and $attempt.json.result.agent.interactive_ready -and $attempt.json.result.agent.agent -eq $Kind -and @('blocked','error') -notcontains [string]$attempt.json.result.agent.agent_status) { return $attempt.json.result.agent }
     if ([string]$attempt.json.error.code -eq 'agent_pane_busy') { Start-Sleep -Milliseconds 750; continue }
     throw "Herdr agent start failed: $($attempt.text)"
   } while ((Get-Date) -lt $deadline)

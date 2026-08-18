@@ -7,7 +7,7 @@ param(
   [Parameter(Mandatory)][string]$Prompt,
   [ValidateSet('full','plan')][string]$Access = 'full',
   [string]$OpenCodeModel,
-  [ValidateSet('task','verification')][string]$Profile,
+  [ValidateSet('task','verification','research')][string]$Profile,
   [string]$ProjectRoot = (Get-Location).Path,
   [ValidateSet('right','down')][string]$Direction = 'right'
 )
@@ -49,7 +49,7 @@ if ($Profile) {
   $profilePath = Join-Path $project 'herdr\dispatch-profile.json'
   if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw "Herdr dispatch profile not found: $profilePath. Run 'herdr init' from the project root first." }
   try { $dispatchProfile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json } catch { throw "Invalid Herdr dispatch profile: $profilePath" }
-  $entry = if ($Profile -eq 'task') { $dispatchProfile.task_agent } else { $dispatchProfile.verification_agent }
+  $entry = switch ($Profile) { 'task' { $dispatchProfile.task_agent }; 'verification' { $dispatchProfile.verification_agent }; 'research' { $dispatchProfile.research_agent } }
   if (-not $entry -or -not $entry.kind) { throw "Profile '$Profile' is incomplete in $profilePath." }
   $Kind = [string]$entry.kind
   if ($entry.model) { $OpenCodeModel = [string]$entry.model }
@@ -74,6 +74,20 @@ if ($Access -eq 'full' -and $profileNativeArgs.Count) {
 if ($Kind -eq 'opencode' -and $OpenCodeModel) { $OpenCodeModel=Resolve-OpenCodeModel $OpenCodeModel; $nativeArgs+=@('-m',$OpenCodeModel) }
 $date=Get-Date -Format 'yyyy-MM-dd';$stamp=Get-Date -Format 'HHmmss';$handoff=Join-Path $project "herdr\$Category\$date\$stamp--$Name--$Slug";New-Item -ItemType Directory -Force -Path $handoff|Out-Null
 $resultPath=Join-Path $handoff 'result.md';$briefPath=Join-Path $handoff 'brief.md';$statusPath=Join-Path $handoff 'status.json';$pane=$null;$agent=$null
+$workflowReference = 'C:\Users\Lenovo\.codex\skills\herdr\references\dispatch-workflows.md'
+$roleContract = switch ($Profile) {
+  'research' { @"
+You are the research agent. Follow the deep-research protocol in $($workflowReference): use primary evidence, keep a decision-critical claim ledger with exact source evidence and access dates, state uncertainty and contradictory evidence, and remain read-only. A verifier audits evidence; do not claim unverified conclusions.
+"@ }
+  'verification' { @"
+You are the verification and integration agent. Read the execution candidate's result/branch/worktree supplied in the task prompt. Evaluate outcome, regression, spec/scope, and standards/integration independently. Report only reproducible P0/P1 blockers (maximum five) with acceptance rule and command/file evidence. Do not turn style suggestions into blockers. If all gates pass, confirm the target worktree is clean and at the expected base, merge safely, re-run the applicable checks after merge, and report `merged` with merge SHA. If any gate or safe merge fails, report `fix_required` or `blocked`; never force reset, clean, stash, or overwrite other work.
+"@ }
+  default { if ($Category -eq 'bugfix') { @"
+You are the bugfix execution agent. Before editing, build and run a narrow, red-capable reproduction of the reported symptom. Do not ship a guess-based patch when no such loop exists. Minimise the repro, test falsifiable hypotheses one variable at a time, add a regression test at the correct seam where possible, fix the root cause, re-run the original reproduction, remove temporary debug instrumentation, and commit the candidate branch. Make the mandatory worktree decision before edits. Return `candidate` with branch, base/candidate SHAs, commands and results; do not merge—the verification agent owns the safe merge after independent acceptance.
+"@ } else { @"
+You are the task execution agent. Before editing, define observable acceptance checks and make the mandatory worktree decision. Use an isolated worktree for dirty shared trees, concurrent work, or overlap risk. Implement the smallest complete change, run focused and relevant full validation, and commit the candidate branch. Return `candidate` with worktree decision, path, branch, base/candidate SHAs, changed files, acceptance checks, and command results; do not merge—the verification agent owns the safe merge after independent acceptance.
+"@ } }
+}
 try {
 @"
 # Brief
@@ -85,13 +99,13 @@ try {
 ## Task
 $Prompt
 
-## Worktree and integration contract
-For `task` or `bugfix`, before any edit, inspect Git status, target branch, existing worktrees, and concurrent/overlapping edits. Independently decide whether a dedicated worktree is required to avoid conflicts; do not skip this decision because the user did not explicitly request one. Use a dedicated branch and worktree whenever the shared tree is dirty with unrelated changes, implementation is concurrent, or overlap risk exists. If you use one: verify inside it, safely merge its branch into the intended target worktree only after confirming that target is clean and unchanged as expected, then run the applicable verification again after the merge. Do not force a merge, reset, clean, stash, or overwrite other changes. If safe merge or post-merge verification is blocked, write the exact blocker and replay steps in the result and send a `需要处理` Herdr notification; do not claim completion.
+## Workflow role contract
+$roleContract
 
-Your `result.md` must state: worktree decision and reason; worktree path/branch/commit SHA if used; merge command/result; verification before and after merge; conclusion, commands/tests and outcomes, evidence, changed files, blockers, and confirmation that no secrets were recorded. For `research`, remain read-only unless the user explicitly requests changes.
+Your `result.md` must state the workflow state (`candidate`, `passed`, `fix_required`, `blocked`, or `merged`), conclusion, commands/tests and outcomes, evidence, changed files, blockers, and confirmation that no secrets were recorded. Include the worktree/branch/commit/merge facts applicable to your role. For `research`, remain read-only unless the user explicitly requests changes.
 
 ## Mandatory completion contract
-Only after the required verification and (when applicable) successful safe merge, write full Markdown evidence to `$resultPath` and run:
+Only after completing your role's required evidence, write full Markdown evidence to `$resultPath` and run:
 `herdr notification show "Herdr: $Name 已完成" --body "$resultPath" --sound done`
 Do not report completion only in the TUI.
 "@ | Set-Content -LiteralPath $briefPath -Encoding utf8
@@ -103,7 +117,7 @@ Do not report completion only in the TUI.
   if(-not $agent -or $agent.agent -ne $Kind -or -not $agent.interactive_ready){throw 'Herdr did not return a confirmed interactive agent.'}
   $status=[ordered]@{name=$Name;kind=$Kind;access=$Access;model=$OpenCodeModel;pane_id=$pane;started_at=(Get-Date -Format o);brief_path=$briefPath;result_path=$resultPath;start_result=$agent}
   $status|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $statusPath -Encoding utf8
-  $message="Read $briefPath. Complete the task. For task/bugfix, make the mandatory worktree decision before editing and do not claim completion until safe merge plus post-merge verification have succeeded. Before completion write $resultPath, then send the exact Herdr completion notification stated in the brief. Final reply: summary plus result path only."
+  $message="Read $briefPath. Follow the workflow role contract exactly. Before completion write $resultPath with the required state and evidence, then send the exact Herdr completion notification stated in the brief. Final reply: summary plus result path only."
   if($Kind -eq 'opencode'){Start-Sleep -Seconds 10;& herdr pane send-text $pane $message;& herdr pane send-keys $pane enter}else{& herdr agent prompt $Name $message|Out-Null}
   $watcher=Join-Path $PSScriptRoot 'Watch-HerdrHandoff.ps1';$watchArgs="-NoProfile -ExecutionPolicy Bypass -File `"$watcher`" -AgentName `"$Name`" -StatusPath `"$statusPath`"";$watch=Start-Process -FilePath powershell.exe -ArgumentList $watchArgs -WindowStyle Hidden -PassThru
   [pscustomobject]@{name=$Name;pane_id=$pane;handoff=$handoff;brief=$briefPath;result=$resultPath;status=$statusPath;watcher_pid=$watch.Id}|ConvertTo-Json -Depth 4

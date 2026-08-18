@@ -5,8 +5,11 @@ param(
   [string]$TaskOpenCodeModel,
   [string]$VerificationKind,
   [string]$VerificationOpenCodeModel,
+  [string]$ResearchKind,
+  [string]$ResearchOpenCodeModel,
   [string[]]$TaskFullAccessArgs,
   [string[]]$VerificationFullAccessArgs,
+  [string[]]$ResearchFullAccessArgs,
   [switch]$SkipSkillsInstall,
   [switch]$Help
 )
@@ -18,13 +21,13 @@ Herdr project initialization
 Run from a project root:
   herdr init
 
-The interactive flow selects task and verification agents, validates their
-terminal executables, writes herdr\dispatch-profile.json, then runs:
+The interactive flow selects task, verification, and research agents, validates
+their terminal executables, writes herdr\dispatch-profile.json, then runs:
   npx skills@latest add mattpocock/skills
 
 Automation/testing options:
-  -ProjectRoot <path> -TaskKind <kind> -VerificationKind <kind>
-  -TaskOpenCodeModel <id> -VerificationOpenCodeModel <id>
+  -ProjectRoot <path> -TaskKind <kind> -VerificationKind <kind> -ResearchKind <kind>
+  -TaskOpenCodeModel <id> -VerificationOpenCodeModel <id> -ResearchOpenCodeModel <id>
   -SkipSkillsInstall
 "@ | Write-Output
   exit 0
@@ -112,6 +115,7 @@ $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $supportedKinds = Get-SupportedKinds
 $task = Select-Agent 'task' $TaskKind $TaskOpenCodeModel $TaskFullAccessArgs $supportedKinds
 $verification = Select-Agent 'verification' $VerificationKind $VerificationOpenCodeModel $VerificationFullAccessArgs $supportedKinds
+$research = Select-Agent 'research' $ResearchKind $ResearchOpenCodeModel $ResearchFullAccessArgs $supportedKinds
 $herdrDirectory = Join-Path $project 'herdr'
 New-Item -ItemType Directory -Force -Path $herdrDirectory | Out-Null
 $profilePath = Join-Path $herdrDirectory 'dispatch-profile.json'
@@ -121,12 +125,14 @@ $profile = [ordered]@{
   project_root = $project
   task_agent = $task
   verification_agent = $verification
+  research_agent = $research
   skills_install_command = 'npx skills@latest add mattpocock/skills'
 }
 $profile | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $profilePath -Encoding utf8
 Write-Host "Herdr profile written: $profilePath"
 Write-Host "Task: $($task.kind)$($(if($task.model){' / ' + $task.model}else{''}))"
 Write-Host "Verification: $($verification.kind)$($(if($verification.model){' / ' + $verification.model}else{''}))"
+Write-Host "Research: $($research.kind)$($(if($research.model){' / ' + $research.model}else{''}))"
 if ($SkipSkillsInstall) { Write-Host 'Skipped skills installation by request.'; exit 0 }
 Write-Host 'Starting project skill installation: npx skills@latest add mattpocock/skills'
 & npx skills@latest add mattpocock/skills

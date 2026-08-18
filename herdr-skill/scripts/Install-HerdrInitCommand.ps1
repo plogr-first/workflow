@@ -24,7 +24,7 @@ exit /b %ERRORLEVEL%
 :inithelp
 echo Herdr project initialization
  echo Usage: herdr init
- echo Select task and verification agents, write herdr\dispatch-profile.json,
+ echo Select task, verification, and research agents, write herdr\dispatch-profile.json,
  echo then run npx skills@latest add mattpocock/skills.
 exit /b 0
 "@

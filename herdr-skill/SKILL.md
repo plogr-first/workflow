@@ -23,10 +23,11 @@ herdr init
 
 该命令由本 Skill 安装的兼容包装器提供；除 `init` 外的全部 `herdr` 参数都会透明转发给官方 `herdr.exe`。初始化器依次选择并校验：
 
-1. **任务 Agent**：`claude`、`gemini`、`codex`、`opencode` 或自定义 Herdr 支持 kind；
-2. **校验 Agent**：同一套选择；
-3. OpenCode 的每一次选择都会从实时 `opencode models` 输出中选择模型；
-4. 所有内置 Agent 使用已验证的完全访问参数。自定义 kind 必须同时是当前 Herdr 支持 kind、在 PATH 中有同名可执行文件，且由用户提供其完全访问启动参数；不得猜测第三方 Agent 的危险模式参数。
+1. **任务 Agent**：用于实现任务与 bugfix；
+2. **校验 Agent**：用于独立验收、一次返工后的复验，以及安全合并；
+3. **资料搜寻 Agent**：用于深度、证据驱动的资料探查；
+4. 三者都可选 `claude`、`gemini`、`codex`、`opencode` 或自定义 Herdr 支持 kind。OpenCode 的每一次选择都会从实时 `opencode models` 输出中选择模型；
+5. 所有内置 Agent 使用已验证的完全访问参数。自定义 kind 必须同时是当前 Herdr 支持 kind、在 PATH 中有同名可执行文件，且由用户提供其完全访问启动参数；不得猜测第三方 Agent 的危险模式参数。
 
 初始化会写入：
 
@@ -40,7 +41,7 @@ herdr init
 npx skills@latest add mattpocock/skills
 ```
 
-使用配置的默认任务/校验 Agent 时，调用派遣脚本时传入 `-Profile task` 或 `-Profile verification`，而不是手写 `-Kind`；用户显式给出的 `-Kind`/模型优先于项目配置。安装包装器只需执行一次：
+使用配置的默认 Agent 时，调用派遣脚本时传入 `-Profile task`、`-Profile verification` 或 `-Profile research`，而不是手写 `-Kind`；用户显式给出的 `-Kind`/模型优先于项目配置。安装包装器只需执行一次：
 
 ```powershell
 & 'C:\Users\Lenovo\.codex\skills\herdr\scripts\Install-HerdrInitCommand.ps1'
@@ -54,6 +55,20 @@ npx skills@latest add mattpocock/skills
 2. 运行 `herdr agent`，仅使用当前 CLI 列出的 kind。
 3. Windows 上对每个首次使用的 CLI 运行 `Start-Process <tool> --version`。若报 `%1 不是有效的 Win32 应用程序`，停止派遣并执行“Windows npm shim 修复”。
 4. 默认在调用方所在项目创建交接目录。不得把 Cookie、Token、密码或原始凭据写入交接文件。
+
+## 工作流：资料搜寻、任务派发、Bug 修复
+
+以 [深度定制工作流](references/dispatch-workflows.md) 为唯一流程权威。不要把 `to-spec`、`to-tickets` 作为 Herdr 派遣的前置条件；用户与单独的对话 Agent 完成思路/计划讨论后，主调度 Agent 直接把可验收的 brief 交给下面三条流。
+
+| 场景 | 首次派遣 | 验收/结束 |
+|---|---|---|
+| 资料深度搜寻 | `-Profile research`，`-Category research` | `-Profile verification` 审计关键主张的来源、证据与覆盖范围；最多一次补证，不作文字润色循环。 |
+| 任务派发 | `-Profile task`，`-Category task` | 任务 Agent 产出提交的候选 worktree；`-Profile verification` 按 Outcome、Regression、Spec/scope、Standards/integration 四门验收，并仅在通过后安全合并和合并后复测。 |
+| Bug 修复 | `-Profile task`，`-Category bugfix` | 执行 Agent 必须先建立红色可复现 loop；验收 Agent 独立复跑原始复现和回归测试，再走四门验收/安全合并。 |
+
+**停止规则：** 校验报告只包含可复现的 P0/P1 阻塞项，最多五项；主调度只允许复用原执行 Agent 做**一次**返工。复验仍不通过、无法安全合并、或缺少可复现 bug loop 时，状态为 `blocked` 并交给用户，不得在 Agent 间无限来回。
+
+**通过定义：** Agent `idle`、测试进程退出 0、或某一份 report 存在，都不是通过。任务/bugfix 只有四门全部通过、目标工作树干净且期望基线未变、合并后适用验证再次通过，才是 `merged`。资料搜寻只有每个决策关键主张都有恰当第一方证据或明确标注不确定，才是 `passed`。
 
 ## 1. 固定交接命名
 

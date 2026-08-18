@@ -26,8 +26,8 @@ Run from a project root:
   herdr init
 
 The interactive flow selects task, verification, and research agents, validates
-their terminal executables, writes herdr\dispatch-profile.json, then runs:
-  npx skills@latest add mattpocock/skills
+their terminal executables, installs official mattpocock/skills, verifies the engineering skill hashes,
+then writes herdr\dispatch-profile.json.
 
 Automation/testing options:
   -ProjectRoot <path> -TaskKind <kind> -VerificationKind <kind> -ResearchKind <kind>
@@ -114,16 +114,32 @@ function Select-HerdrSession([string]$Requested) {
   throw 'Invalid Herdr session selection.'
 }
 function Get-MattpockSkills([string]$Project) {
+  # Match only the official engineering skill files, not same-named local skills.
+  $officialRoot = 'C:\Users\Lenovo\AppData\Local\Temp\mattpocock-skills-audit-20260818\skills\engineering'
   $roots = @(
     (Join-Path $Project '.agents\skills'),
-    (Join-Path $env:USERPROFILE '.agents\skills'),
-    'F:\mattpock\.agents\skills'
+    'F:\mattpock\.agents\skills',
+    (Join-Path $env:USERPROFILE '.agents\skills')
   ) | Select-Object -Unique
-  $names = @('implement','investigate','review','qa','qa-only','scrape','browse','systematic-debugging','test-driven-development','using-git-worktrees')
+  $names = @('research','implement','diagnosing-bugs','code-review','tdd')
   $out = [ordered]@{}
   foreach ($name in $names) {
-    $hit = $roots | ForEach-Object { Join-Path $_ $name } | Where-Object { Test-Path (Join-Path $_ 'SKILL.md') } | Select-Object -First 1
-    $out[$name] = [ordered]@{ available = [bool]$hit; path = if($hit){(Resolve-Path $hit).Path}else{$null} }
+    $expected = Join-Path $officialRoot "$name\SKILL.md"
+    $expectedHash = if(Test-Path -LiteralPath $expected){ (Get-FileHash -LiteralPath $expected -Algorithm SHA256).Hash.ToLowerInvariant() }else{$null}
+    $candidates = @($roots | ForEach-Object { Join-Path $_ $name } | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'SKILL.md') })
+    $hit = $null; $actualHash = $null
+    foreach($candidate in $candidates) {
+      $candidateFile=Join-Path $candidate 'SKILL.md'
+      $hash=(Get-FileHash -LiteralPath $candidateFile -Algorithm SHA256).Hash.ToLowerInvariant()
+      if(-not $expectedHash -or $hash -eq $expectedHash){$hit=(Resolve-Path -LiteralPath $candidate).Path;$actualHash=$hash;break}
+    }
+    $out[$name] = [ordered]@{
+      available = [bool]$hit
+      path = $hit
+      official_sha256 = $expectedHash
+      actual_sha256 = $actualHash
+      verified_official = if($expectedHash -and $actualHash){$expectedHash -eq $actualHash}else{$null}
+    }
   }
   return $out
 }
@@ -231,15 +247,22 @@ $research = Select-Agent 'research' $ResearchKind $ResearchOpenCodeModel $Resear
 $herdrDirectory = Join-Path $project 'herdr'
 New-Item -ItemType Directory -Force -Path $herdrDirectory | Out-Null
 $profilePath = Join-Path $herdrDirectory 'dispatch-profile.json'
+if (-not $SkipSkillsInstall) {
+  Write-Host 'Starting project skill installation: npx skills@latest add mattpocock/skills'
+  Push-Location $project
+  try { & npx skills@latest add mattpocock/skills } finally { Pop-Location }
+  if ($LASTEXITCODE -ne 0) { throw "skills installation failed with exit code $LASTEXITCODE. No Herdr profile was written." }
+} else { Write-Host 'Skipped skills installation by request.' }
+$mattpockSkills = Get-MattpockSkills $project
 $profile = [ordered]@{
-  schema_version = 2
+  schema_version = 3
   initialized_at = (Get-Date -Format o)
   project_root = $project
   herdr_session = [ordered]@{ name = $session; bound_at = (Get-Date -Format o) }
   task_agent = $task
   verification_agent = $verification
   research_agent = $research
-  mattpock_skills = (Get-MattpockSkills $project)
+  mattpocock_skills = $mattpockSkills
   git = $git
   skills_install_command = 'npx skills@latest add mattpocock/skills'
 }
@@ -249,7 +272,3 @@ Write-Host "Task: $($task.kind)$($(if($task.model){' / ' + $task.model}else{''})
 Write-Host "Verification: $($verification.kind)$($(if($verification.model){' / ' + $verification.model}else{''}))"
 Write-Host "Research: $($research.kind)$($(if($research.model){' / ' + $research.model}else{''}))"
 Write-Host "Git: repository=$($git.repository), initialized_by_herdr=$($git.initialized_by_herdr), has_commit=$($git.has_commit), push_policy=$($git.push_policy)$($(if($git.push_remote){' / ' + $git.push_remote}else{''}))"
-if ($SkipSkillsInstall) { Write-Host 'Skipped skills installation by request.'; exit 0 }
-Write-Host 'Starting project skill installation: npx skills@latest add mattpocock/skills'
-& npx skills@latest add mattpocock/skills
-if ($LASTEXITCODE -ne 0) { throw "skills installation failed with exit code $LASTEXITCODE. The Herdr profile was retained at $profilePath." }

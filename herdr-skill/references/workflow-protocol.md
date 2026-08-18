@@ -32,7 +32,7 @@ Use `Mode task`.
 
 Execution: define observable acceptance checks; inspect Git status/current branch/worktrees/concurrent edits; isolate in a worktree when shared tree is dirty, concurrent, or overlapping; implement the smallest complete change; run focused and relevant full checks; commit a `candidate`. Record worktree path, branch, base SHA, candidate SHA, changed files, and command results. Do not merge.
 
-Use `/using-git-worktrees` where available. `worktree_decision` is mandatory: `isolated` requires the linked worktree path; `in_place` requires an explicit safety reason in `result.md`. An unborn Git repository has no safe baseline for candidate worktrees; write `blocked` rather than silently committing a project-wide baseline.
+Make the worktree decision from repository state; use Git worktrees directly when isolation is required. `worktree_decision` is mandatory: `isolated` requires the linked worktree path; `in_place` requires an explicit safety reason in `result.md`. An unborn Git repository has no safe baseline for candidate worktrees; write `blocked` rather than silently committing a project-wide baseline.
 
 Verification gates:
 
@@ -62,4 +62,4 @@ A verifier reports only reproducible P0/P1 blockers, maximum five. Every item st
 
 `herdr init` binds a project profile to one named Herdr session. Every formal `workflow.json` records that session, a unique workflow ID, task/verifier Agent names, current role, and repair round. `herdr resume` only considers unfinished workflows in the bound project/session. It reads `events.jsonl`, handoff files, progress files, and Git/worktree state; it never infers identity from a pane title or chat history. If the recorded Agent is gone, it starts a replacement generation and updates the workflow state before continuing. Multiple resumable workflows require an explicit workflow ID or `--all`. Terminal states are never reactivated.
 
-The task role uses `/using-git-worktrees`; `/implement` is used only for a Figma/UI implementation task because it is not a generic backend implementation skill. Bugfix uses `/systematic-debugging`; verification uses `/review` and report-only `/qa-only`, never mutating `/qa`. Research uses `/scrape` or `/browse` for web evidence and `/investigate` only for root-cause technical investigation. A missing required skill must be recorded as a blocker, not silently treated as a successful review.
+Use the official mattpocock engineering skills recorded by `herdr init`: research uses `/research`; task execution uses `/implement`, `/tdd` at confirmed seams, then `/code-review`; bugfix uses `/diagnosing-bugs`, `/tdd` where appropriate, then `/code-review`; verification uses `/code-review` against the fixed point `base_sha...candidate_sha`. `/code-review` is independent review, not the merge authority: the verifier separately runs the Herdr acceptance and API-contract gates before integration. A missing required skill is a blocker, never an assumed pass.

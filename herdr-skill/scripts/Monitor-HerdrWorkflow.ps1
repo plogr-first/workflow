@@ -47,7 +47,7 @@ while ((Get-Date) -lt $deadline) {
     $taskWrite = (Get-Item -LiteralPath $taskOutcomePath).LastWriteTimeUtc
     if ($taskWrite -gt $lastTaskWrite) {
       $lastTaskWrite = $taskWrite
-      $activation = "Wake-up: you are the verification Agent. Read execution evidence at $taskResultPath and machine state at $taskOutcomePath. Independently apply the workflow gate in your brief. For API-affecting work, also verify docs/OpenAPI/generated client/backend routes and schemas align with an actual endpoint/integration check. Write $verifierResultPath and valid $verifierOutcomePath. State merged only after safe merge and post-merge verification; state fix_required only for reproducible P0/P1 blockers."
+      $activation = "Wake-up: you are the verification Agent. Read execution evidence at $taskResultPath and machine state at $taskOutcomePath. Independently apply the workflow gate in your brief. For API-affecting work, also verify docs/OpenAPI/generated client/backend routes and schemas align with an actual endpoint/integration check. Write $verifierResultPath, a verification.md with the independent gate evidence, and valid $verifierOutcomePath. State merged only after safe merge and post-merge verification; state fix_required only for reproducible P0/P1 blockers."
       & herdr agent prompt $verifier.name $activation | Out-Null
       $verifierActivated = $true
       Save-Workflow $workflow 'verifying'

@@ -75,7 +75,7 @@ if ($Access -eq 'full' -and $profileNativeArgs.Count) {
 if ($Kind -eq 'opencode' -and $OpenCodeModel) { $OpenCodeModel=Resolve-OpenCodeModel $OpenCodeModel; $nativeArgs+=@('-m',$OpenCodeModel) }
 $date=Get-Date -Format 'yyyy-MM-dd';$stamp=Get-Date -Format 'HHmmss';$handoff=Join-Path $project "herdr\$Category\$date\$stamp--$Name--$Slug";New-Item -ItemType Directory -Force -Path $handoff|Out-Null
 $resultPath=Join-Path $handoff 'result.md';$outcomePath=Join-Path $handoff 'outcome.json';$briefPath=Join-Path $handoff 'brief.md';$statusPath=Join-Path $handoff 'status.json';$pane=$null;$agent=$null
-$workflowReference = 'C:\Users\Lenovo\.codex\skills\herdr\references\dispatch-workflows.md'
+$workflowReference = 'C:\Users\Lenovo\.codex\skills\herdr\references\workflow-protocol.md'
 $roleContract = switch ($Profile) {
   'research' { @"
 You are the research agent. Follow the deep-research protocol in $($workflowReference): use primary evidence, keep a decision-critical claim ledger with exact source evidence and access dates, state uncertainty and contradictory evidence, and remain read-only. A verifier audits evidence; do not claim unverified conclusions.

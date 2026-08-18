@@ -36,6 +36,27 @@ function Read-Outcome([string]$Path) {
   if (@('candidate','passed','fix_required','blocked','merged') -notcontains [string]$o.state) { return $null }
   return $o
 }
+function Test-OutcomeEvidence($Workflow, [string]$Role, $Outcome) {
+  $entry = if($Role -eq 'task'){$Workflow.task}else{$Workflow.verifier}
+  if (-not (Test-Path -LiteralPath ([string]$entry.result) -PathType Leaf) -or (Get-Item -LiteralPath ([string]$entry.result)).Length -eq 0) { return 'missing result.md' }
+  if ($Role -eq 'task' -and $Outcome.state -eq 'candidate' -and $Workflow.mode -ne 'research') {
+    foreach($field in @('worktree_decision','worktree_path','branch','base_sha','candidate_sha')) { if([string]::IsNullOrWhiteSpace([string]$Outcome.$field)){return "candidate missing $field"} }
+    if(@('isolated','in_place') -notcontains [string]$Outcome.worktree_decision){return 'invalid worktree_decision'}
+  }
+  if ($Role -eq 'verification' -and @('passed','merged','fix_required') -contains [string]$Outcome.state) {
+    $verification = Join-Path ([string]$entry.handoff) 'verification.md'
+    if(-not (Test-Path -LiteralPath $verification -PathType Leaf) -or (Get-Item -LiteralPath $verification).Length -eq 0){return 'missing verification.md'}
+  }
+  return $null
+}
+function Push-MergedWorkflow($Workflow) {
+  if ([string]$Workflow.git.push_policy -ne 'after_merge') { return 'not_configured' }
+  $project=[string]$Workflow.project_root; $remote=[string]$Workflow.git.push_remote; $branch=[string]$Workflow.git.target_branch
+  if([string]::IsNullOrWhiteSpace($project) -or [string]::IsNullOrWhiteSpace($remote) -or [string]::IsNullOrWhiteSpace($branch)){throw 'push policy is incomplete in workflow.json'}
+  $output=& git -C $project push $remote $branch 2>&1
+  if($LASTEXITCODE -ne 0){throw "git push $remote $branch failed: $($output -join ' ')"}
+  return 'pushed'
+}
 function OutcomeHash([string]$Path) { if(Test-Path $Path){ return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }; return $null }
 function Prompt-Agent([string]$Name, [string]$Message) {
   $prefix = if($script:Session){ @('--session',$script:Session) } else { @() }
@@ -74,14 +95,21 @@ try {
     }
     if ($taskOutcome -and $taskOutcome.state -eq 'blocked') {
       Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='task_agent_blocked'}; Notify "Herdr: $($workflow.task.name) 已阻塞" ([string]$workflow.task.result) 'request'; break
+    } elseif ($taskOutcome -and $taskOutcome.state -eq 'candidate' -and (Test-OutcomeEvidence $workflow 'task' $taskOutcome)) {
+      $reason=Test-OutcomeEvidence $workflow 'task' $taskOutcome; Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='invalid_task_handoff';detail=$reason}; Notify "Herdr: 任务交接不完整：$reason" ([string]$workflow.task.result) 'request'; break
     } elseif ($workflow.next_role -eq 'verification' -and $taskOutcome -and $taskOutcome.state -eq 'candidate' -and $workflow.last_processed.task_outcome_hash -ne $taskHash) {
       $msg="Wake-up: read $($workflow.task.result), $taskOutcomePath and the configured mattpocock review/qa skills. Verify API docs/OpenAPI, backend routes/validation, generated client/types, and actual endpoint behavior when applicable. Write $($workflow.verifier.result), verification.md, and $verOutcomePath. Use merged only after safe merge and post-merge checks; use fix_required only for reproducible P0/P1 blockers."
       Prompt-Agent ([string]$workflow.verifier.name) $msg; $workflow.last_processed.task_outcome_hash=$taskHash; Save-State $workflow 'verifying' 'verification'; Append-Event 'verification_woken' @{agent=$workflow.verifier.name}; Notify "Herdr: $($workflow.verifier.name) 已唤醒验收" ([string]$workflow.verifier.result)
     } elseif ($workflow.next_role -eq 'task' -and $taskOutcome -and $taskOutcome.state -eq 'candidate' -and @('executing','repairing') -contains [string]$workflow.state) {
       Save-State $workflow 'candidate' 'verification'
+    } elseif ($verOutcome -and (Test-OutcomeEvidence $workflow 'verification' $verOutcome)) {
+      $reason=Test-OutcomeEvidence $workflow 'verification' $verOutcome; Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='invalid_verification_handoff';detail=$reason}; Notify "Herdr: 验收交接不完整：$reason" ([string]$workflow.verifier.result) 'request'; break
     } elseif ($workflow.next_role -eq 'verification' -and $verOutcome -and $workflow.last_processed.verifier_outcome_hash -ne $verHash) {
       $workflow.last_processed.verifier_outcome_hash=$verHash
-      if (($workflow.mode -eq 'research' -and $verOutcome.state -eq 'passed') -or ($workflow.mode -ne 'research' -and $verOutcome.state -eq 'merged')) { Save-State $workflow $verOutcome.state ''; Append-Event 'workflow_completed' @{state=$verOutcome.state}; Notify 'Herdr: 工作流已完成' ([string]$workflow.verifier.result); break }
+      if (($workflow.mode -eq 'research' -and $verOutcome.state -eq 'passed') -or ($workflow.mode -ne 'research' -and $verOutcome.state -eq 'merged')) {
+        if($workflow.mode -ne 'research'){ try {$push=Push-MergedWorkflow $workflow; $workflow|Add-Member -Force -NotePropertyName push_status -NotePropertyValue $push} catch {$workflow|Add-Member -Force -NotePropertyName push_status -NotePropertyValue 'failed';$workflow|Add-Member -Force -NotePropertyName push_error -NotePropertyValue $_.Exception.Message;Save-State $workflow 'merged' '';Append-Event 'push_failed' @{error=$_.Exception.Message};Notify 'Herdr: 已合并，但 git push 失败' ([string]$workflow.verifier.result) 'request';break} }
+        Save-State $workflow $verOutcome.state ''; Append-Event 'workflow_completed' @{state=$verOutcome.state;push_status=$workflow.push_status}; Notify 'Herdr: 工作流已完成' ([string]$workflow.verifier.result); break
+      }
       if ($verOutcome.state -eq 'blocked' -or $verOutcome.state -eq 'passed' -or $verOutcome.state -eq 'merged') { Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='invalid_terminal_role'}; Notify 'Herdr: 工作流被阻塞' ([string]$workflow.verifier.result) 'request'; break }
       if ($verOutcome.state -eq 'fix_required' -and ([int]$workflow.repair_round -lt [int]$workflow.max_repair_rounds)) {
         $workflow.repair_round=[int]$workflow.repair_round+1; Save-State $workflow 'repairing' 'task'; Append-Event 'fix_required' @{repair_round=$workflow.repair_round}

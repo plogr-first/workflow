@@ -8,6 +8,9 @@ param(
   [string]$ResearchKind,
   [string]$ResearchOpenCodeModel,
   [string]$HerdrSessionName,
+  [ValidateSet('manual','after_merge')][string]$PushPolicy,
+  [string]$PushRemote,
+  [switch]$SkipGitInit,
   [string[]]$TaskFullAccessArgs,
   [string[]]$VerificationFullAccessArgs,
   [string[]]$ResearchFullAccessArgs,
@@ -116,13 +119,41 @@ function Get-MattpockSkills([string]$Project) {
     (Join-Path $env:USERPROFILE '.agents\skills'),
     'F:\mattpock\.agents\skills'
   ) | Select-Object -Unique
-  $names = @('implement','investigate','review','qa','systematic-debugging','test-driven-development','using-git-worktrees')
+  $names = @('implement','investigate','review','qa','qa-only','scrape','browse','systematic-debugging','test-driven-development','using-git-worktrees')
   $out = [ordered]@{}
   foreach ($name in $names) {
     $hit = $roots | ForEach-Object { Join-Path $_ $name } | Where-Object { Test-Path (Join-Path $_ 'SKILL.md') } | Select-Object -First 1
     $out[$name] = [ordered]@{ available = [bool]$hit; path = if($hit){(Resolve-Path $hit).Path}else{$null} }
   }
   return $out
+}
+function Get-GitSetup([string]$Project, [bool]$AllowInit, [string]$RequestedPolicy, [string]$RequestedRemote) {
+  $inside = (& git -C $Project rev-parse --is-inside-work-tree 2>$null)
+  $initialized = $false
+  if ($LASTEXITCODE -ne 0 -or $inside -ne 'true') {
+    if (-not $AllowInit) { return [ordered]@{ repository = $false; initialized_by_herdr = $false; has_commit = $false; target_branch = $null; push_policy = 'manual'; push_remote = $null } }
+    & git -C $Project init | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "git init failed in $Project." }
+    $initialized = $true
+    $ignorePath = Join-Path $Project '.gitignore'
+    $ignoreLines = if(Test-Path $ignorePath){@(Get-Content -LiteralPath $ignorePath)}else{@()}
+    foreach($line in @('herdr/','.worktrees/')) { if($ignoreLines -notcontains $line){Add-Content -LiteralPath $ignorePath -Value $line -Encoding utf8} }
+  }
+  $branch = (& git -C $Project branch --show-current 2>$null).Trim()
+  $hasCommit = ((& git -C $Project rev-parse --verify HEAD 2>$null) -and $LASTEXITCODE -eq 0)
+  $remotes = @((& git -C $Project remote 2>$null) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  $policy = if($RequestedPolicy){$RequestedPolicy}else{'manual'}; $remote = $RequestedRemote
+  if (-not $RequestedPolicy -and $remotes.Count -eq 1) {
+    Write-Host ''
+    Write-Host "Git remote detected: $($remotes[0])"
+    $choice = Read-Host 'Push this project after every successful merge? [Y/n]'
+    if ([string]::IsNullOrWhiteSpace($choice) -or $choice -match '^[Yy]') { $policy='after_merge'; $remote=$remotes[0] }
+  }
+  if ($policy -eq 'after_merge') {
+    if (-not $remote) { if($remotes.Count -eq 1){$remote=$remotes[0]}else{throw 'Push policy after_merge requires -PushRemote or exactly one configured git remote.'} }
+    if ($remotes -notcontains $remote) { throw "Git remote '$remote' is not configured in $Project." }
+  } else { $remote=$null }
+  return [ordered]@{ repository = $true; initialized_by_herdr = $initialized; has_commit = [bool]$hasCommit; target_branch = if($branch){$branch}else{$null}; push_policy = $policy; push_remote = $remote; remotes = $remotes }
 }
 function Assert-TerminalAgent([string]$Kind, [string[]]$SupportedKinds) {
   if ($SupportedKinds -notcontains $Kind.ToLowerInvariant()) {
@@ -185,6 +216,7 @@ function Select-Agent([string]$Role, [string]$RequestedKind, [string]$RequestedM
 }
 
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
+$git = Get-GitSetup $project (-not $SkipGitInit) $PushPolicy $PushRemote
 $session = Select-HerdrSession $HerdrSessionName
 $supportedKinds = Get-SupportedKinds
 $task = Select-Agent 'task' $TaskKind $TaskOpenCodeModel $TaskFullAccessArgs $supportedKinds
@@ -202,6 +234,7 @@ $profile = [ordered]@{
   verification_agent = $verification
   research_agent = $research
   mattpock_skills = (Get-MattpockSkills $project)
+  git = $git
   skills_install_command = 'npx skills@latest add mattpocock/skills'
 }
 $profile | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $profilePath -Encoding utf8
@@ -209,6 +242,7 @@ Write-Host "Herdr profile written: $profilePath"
 Write-Host "Task: $($task.kind)$($(if($task.model){' / ' + $task.model}else{''}))"
 Write-Host "Verification: $($verification.kind)$($(if($verification.model){' / ' + $verification.model}else{''}))"
 Write-Host "Research: $($research.kind)$($(if($research.model){' / ' + $research.model}else{''}))"
+Write-Host "Git: repository=$($git.repository), initialized_by_herdr=$($git.initialized_by_herdr), has_commit=$($git.has_commit), push_policy=$($git.push_policy)$($(if($git.push_remote){' / ' + $git.push_remote}else{''}))"
 if ($SkipSkillsInstall) { Write-Host 'Skipped skills installation by request.'; exit 0 }
 Write-Host 'Starting project skill installation: npx skills@latest add mattpocock/skills'
 & npx skills@latest add mattpocock/skills

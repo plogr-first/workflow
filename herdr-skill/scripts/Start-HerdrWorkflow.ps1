@@ -15,6 +15,11 @@ if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw "Herdr di
 $profile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json
 $session = [string]$profile.herdr_session.name
 if ([string]::IsNullOrWhiteSpace($session)) { throw "Herdr profile is missing herdr_session.name: $profilePath" }
+$git = $profile.git
+if (-not $git) { $git = [ordered]@{ repository = $false; has_commit = $false; target_branch = $null; push_policy = 'manual'; push_remote = $null } }
+if ($Mode -ne 'research' -and $git.repository -and -not $git.has_commit) { throw "Git is initialized but has no baseline commit in $project. Review the project, create the first commit, rerun 'herdr init', then dispatch task/bugfix." }
+$requiredSkills = if($Mode -eq 'bugfix'){@('using-git-worktrees','systematic-debugging','review','qa-only')}elseif($Mode -eq 'task'){@('using-git-worktrees','review','qa-only')}else{@()}
+foreach($skill in $requiredSkills){$entry=$profile.mattpock_skills.$skill;if(-not $entry -or -not $entry.available){throw "Required mattpocock skill '$skill' is unavailable. Re-run 'herdr init' after installing the skill."}}
 $stamp = Get-Date -Format 'HHmmssfff'
 function New-AgentName([string]$Prefix) {
   $raw = "wf-$stamp-$Slug-$Prefix".ToLowerInvariant() -replace '[^a-z0-9_-]', '-'
@@ -39,7 +44,7 @@ New-Item -ItemType Directory -Force -Path $workflowRoot | Out-Null
 $workflowPath = Join-Path $workflowRoot 'workflow.json'
 $eventsPath = Join-Path $workflowRoot 'events.jsonl'
 $workflow = [ordered]@{
-  schema_version = 2; workflow_id = "wf-$stamp-$Slug"; mode = $Mode; slug = $Slug; session_name = $session
+  schema_version = 3; workflow_id = "wf-$stamp-$Slug"; mode = $Mode; slug = $Slug; session_name = $session; project_root = $project; git = $git; required_skills = $requiredSkills
   state = 'executing'; next_role = 'task'; repair_round = 0; max_repair_rounds = 2; recovery_attempts = [ordered]@{ task = 0; verification = 0; max = 2 }; created_at = (Get-Date -Format o); updated_at = (Get-Date -Format o)
   last_processed = [ordered]@{ task_outcome_hash = $null; verifier_outcome_hash = $null }
   task = $task; verifier = $verifier

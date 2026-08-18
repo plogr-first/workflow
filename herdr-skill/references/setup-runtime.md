@@ -6,6 +6,8 @@ The init wrapper is installed by `scripts/Install-HerdrInitCommand.ps1` for Powe
 
 Initialization also binds the project to one named persistent Herdr session and records a real mattpocock skill capability manifest (`implement`, `investigate`, `review`, `qa`, debugging, testing, and worktree skills). After a restart, run `herdr resume`; it uses this binding and never searches other sessions. When multiple workflows are unfinished, select one by workflow ID or explicitly pass `--all`.
 
+By default, init runs `git init` only if the project is not already a repository, and creates a minimal `.gitignore` for `herdr/` and `.worktrees/`. It never makes a baseline commit or creates/publishes a remote. If an existing repository has exactly one remote, interactive init offers post-merge pushing; select it only for a remote you intend to publish to. With `push_policy: after_merge`, the monitor performs the actual push after a verified local merge and records any failure without rolling the merge back.
+
 Known full-access profiles are encapsulated by the launcher:
 
 - claude: `--dangerously-skip-permissions`

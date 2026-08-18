@@ -47,6 +47,8 @@ function Start-AgentWhenPaneReady([string]$Pane,[string[]]$NativeArgs) {
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $profileNativeArgs = @()
 $script:HerdrSession = $null
+$gitProfile = $null
+$skillManifest = $null
 if ($Profile) {
   if ($Kind) { throw 'Use either -Kind or -Profile, not both.' }
   $profilePath = Join-Path $project 'herdr\dispatch-profile.json'
@@ -54,6 +56,8 @@ if ($Profile) {
   try { $dispatchProfile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json } catch { throw "Invalid Herdr dispatch profile: $profilePath" }
   $script:HerdrSession = [string]$dispatchProfile.herdr_session.name
   if ([string]::IsNullOrWhiteSpace($script:HerdrSession)) { throw "Herdr profile is missing herdr_session.name: $profilePath" }
+  $gitProfile = $dispatchProfile.git
+  $skillManifest = $dispatchProfile.mattpock_skills
   $entry = switch ($Profile) { 'task' { $dispatchProfile.task_agent }; 'verification' { $dispatchProfile.verification_agent }; 'research' { $dispatchProfile.research_agent } }
   if (-not $entry -or -not $entry.kind) { throw "Profile '$Profile' is incomplete in $profilePath." }
   $Kind = [string]$entry.kind
@@ -80,17 +84,19 @@ if ($Kind -eq 'opencode' -and $OpenCodeModel) { $OpenCodeModel=Resolve-OpenCodeM
 $date=Get-Date -Format 'yyyy-MM-dd';$stamp=Get-Date -Format 'HHmmss';$handoff=Join-Path $project "herdr\$Category\$date\$stamp--$Name--$Slug";New-Item -ItemType Directory -Force -Path $handoff|Out-Null
 $resultPath=Join-Path $handoff 'result.md';$outcomePath=Join-Path $handoff 'outcome.json';$briefPath=Join-Path $handoff 'brief.md';$statusPath=Join-Path $handoff 'status.json';$progressPath=Join-Path $handoff 'progress.json';$pane=$null;$agent=$null
 $workflowReference = 'C:\Users\Lenovo\.codex\skills\herdr\references\workflow-protocol.md'
+$skillPaths = if($skillManifest){ @($skillManifest.psobject.Properties | Where-Object {$_.Value.available} | ForEach-Object { "$($_.Name): $($_.Value.path)" }) -join '; ' }else{'not recorded'}
+$gitContract = if($gitProfile -and $gitProfile.repository -and -not $gitProfile.has_commit){'Git was initialized but has no baseline commit. For task/bugfix, do not edit or claim candidate: write outcome state blocked and explain that the user must review and create the initial baseline commit first.'}else{'Git baseline status permits normal task/bugfix execution; preserve unrelated changes.'}
 $roleContract = switch ($Profile) {
   'research' { @"
-You are the research agent. Use mattpocock `/investigate` when available, then follow the deep-research protocol in $($workflowReference): use primary evidence, keep a decision-critical claim ledger with exact source evidence and access dates, state uncertainty and contradictory evidence, and remain read-only. A verifier audits evidence; do not claim unverified conclusions.
+You are the research agent. Use mattpocock `/scrape` or `/browse` for web evidence when available; use `/investigate` only for root-cause technical investigation. Follow $($workflowReference): use primary evidence, keep a decision-critical claim ledger with exact source evidence and access dates, state uncertainty and contradictory evidence, and remain read-only. A verifier audits evidence; do not claim unverified conclusions.
 "@ }
   'verification' { @"
-You are the verification and integration agent. Use mattpocock `/review` and `/qa` when available. Read the execution candidate's result/branch/worktree supplied in the task prompt. Evaluate outcome, regression, spec/scope, and standards/integration independently. Report only reproducible P0/P1 blockers (maximum five) with acceptance rule and command/file evidence. Do not turn style suggestions into blockers. If all gates pass, confirm the target worktree is clean and at the expected base, merge safely, re-run the applicable checks after merge, and report `merged` with merge SHA. If any gate or safe merge fails, report `fix_required` or `blocked`; never force reset, clean, stash, or overwrite other work.
+You are the verification and integration agent. Use mattpocock `/review`; use `/qa-only` for report-only QA, never `/qa` because that skill can edit and fix. Read the execution candidate's result/branch/worktree supplied in the task prompt. Evaluate outcome, regression, spec/scope, and standards/integration independently. Report only reproducible P0/P1 blockers (maximum five) with acceptance rule and command/file evidence. Do not turn style suggestions into blockers. If all gates pass, confirm the target tree is clean and at the expected base, merge safely, re-run the applicable checks after merge, and report `merged` with merge SHA. Do not push: the workflow monitor owns the configured post-merge push. If any gate or safe merge fails, report `fix_required` or `blocked`; never force reset, clean, stash, or overwrite other work.
 "@ }
   default { if ($Category -eq 'bugfix') { @"
-You are the bugfix execution agent. Use mattpocock `/systematic-debugging` to establish the loop, then `/implement` for the fix. Before editing, build and run a narrow, red-capable reproduction of the reported symptom. Do not ship a guess-based patch when no such loop exists. Minimise the repro, test falsifiable hypotheses one variable at a time, add a regression test at the correct seam where possible, fix the root cause, re-run the original reproduction, remove temporary debug instrumentation, and commit the candidate branch. Make the mandatory worktree decision before edits. Return `candidate` with branch, base/candidate SHAs, commands and results; do not merge—the verification agent owns the safe merge after independent acceptance.
+You are the bugfix execution agent. Use mattpocock `/systematic-debugging` to establish the loop. Use `/implement` only when this is a Figma/UI implementation task; it is not a generic backend coding skill. $gitContract Before editing, build and run a narrow, red-capable reproduction. Do not ship a guess-based patch when no such loop exists. Use `/using-git-worktrees` before the worktree decision. Return `candidate` only with outcome fields worktree_decision, worktree_path, branch, base_sha, candidate_sha, changed files, commands and results; do not merge.
 "@ } else { @"
-You are the task execution agent. Use mattpocock `/implement`. Before editing, define observable acceptance checks and make the mandatory worktree decision. Use an isolated worktree for dirty shared trees, concurrent work, or overlap risk. Implement the smallest complete change, run focused and relevant full validation, and commit the candidate branch. Return `candidate` with worktree decision, path, branch, base/candidate SHAs, changed files, acceptance checks, and command results; do not merge—the verification agent owns the safe merge after independent acceptance.
+You are the task execution agent. Use mattpocock `/using-git-worktrees` before deciding isolation. Use `/implement` only for Figma/UI implementation tasks; it is not a generic coding skill. $gitContract Before editing, define observable acceptance checks and make the mandatory worktree decision. Use an isolated worktree for dirty shared trees, concurrent work, or overlap risk. Implement the smallest complete change, run focused and relevant full validation, and commit the candidate branch. Return `candidate` only with outcome fields worktree_decision (`isolated` or `in_place`), worktree_path, branch, base_sha, candidate_sha, changed_files, acceptance checks and command results; do not merge.
 "@ } }
 }
 try {
@@ -106,6 +112,9 @@ $Prompt
 
 ## Workflow role contract
 $roleContract
+
+## Available mattpocock skills
+$skillPaths
 
 Your `progress.json` must be updated at phase boundaries with `{ "phase": "investigating|implementing|testing|candidate_ready|blocked", "updated_at": "...", "completed": [], "next_action": "..." }`. Your `result.md` must state the workflow state (`candidate`, `passed`, `fix_required`, `blocked`, or `merged`), conclusion, commands/tests and outcomes, evidence, changed files, blockers, and confirmation that no secrets were recorded. Include the worktree/branch/commit/merge facts applicable to your role. For `research`, remain read-only unless the user explicitly requests changes.
 

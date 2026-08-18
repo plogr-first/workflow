@@ -16,6 +16,8 @@ Each Agent owns only files in its own handoff folder:
 
 The monitor reads execution outcome, prompts the deferred verifier, reads verifier outcome, and either prompts the original execution Agent for repair or records the final state. It permits two repair rounds; a third unresolved verification is `blocked`.
 
+The monitor rejects a candidate without a non-empty `result.md`. For task/bugfix candidates it also requires `worktree_decision`, `worktree_path`, `branch`, `base_sha`, and `candidate_sha`. It rejects verifier terminal outcomes without non-empty `result.md` and `verification.md`. A natural-language completion message never substitutes for these files.
+
 ## Research
 
 Use `Mode research`.
@@ -30,6 +32,8 @@ Use `Mode task`.
 
 Execution: define observable acceptance checks; inspect Git status/current branch/worktrees/concurrent edits; isolate in a worktree when shared tree is dirty, concurrent, or overlapping; implement the smallest complete change; run focused and relevant full checks; commit a `candidate`. Record worktree path, branch, base SHA, candidate SHA, changed files, and command results. Do not merge.
 
+Use `/using-git-worktrees` where available. `worktree_decision` is mandatory: `isolated` requires the linked worktree path; `in_place` requires an explicit safety reason in `result.md`. An unborn Git repository has no safe baseline for candidate worktrees; write `blocked` rather than silently committing a project-wide baseline.
+
 Verification gates:
 
 1. Outcome: stated acceptance checks pass.
@@ -39,6 +43,8 @@ Verification gates:
 5. API contract, when API-affecting: authoritative docs/OpenAPI, backend route/controller/validation, generated client/types, and actual endpoint/integration behaviour agree on method, path, auth, fields, status/error semantics, and pagination/cursor semantics.
 
 On pass, verifier confirms target tree is clean and at expected base, merges safely, runs applicable post-merge verification, records merge SHA, and emits `merged`. Never force reset, clean, stash, or overwrite unrelated changes.
+
+`herdr init` runs `git init` by default only when the project is not already a Git repository. It never creates the first project-wide commit, configures a remote, or publishes code. It adds `herdr/` and `.worktrees/` to `.gitignore` for a newly initialized repository. When init records `push_policy: after_merge` for an existing configured remote, the monitor runs the actual `git push <remote> <target-branch>` after a successful local merge. A push failure preserves the merge, records `push_status: failed`, and sends an attention notification; it must never undo the merge.
 
 ## Bugfix
 
@@ -56,4 +62,4 @@ A verifier reports only reproducible P0/P1 blockers, maximum five. Every item st
 
 `herdr init` binds a project profile to one named Herdr session. Every formal `workflow.json` records that session, a unique workflow ID, task/verifier Agent names, current role, and repair round. `herdr resume` only considers unfinished workflows in the bound project/session. It reads `events.jsonl`, handoff files, progress files, and Git/worktree state; it never infers identity from a pane title or chat history. If the recorded Agent is gone, it starts a replacement generation and updates the workflow state before continuing. Multiple resumable workflows require an explicit workflow ID or `--all`. Terminal states are never reactivated.
 
-The task role uses the available mattpocock implementation/debugging skill; verification uses the available review/QA and API-contract checks. A missing required skill must be recorded as a blocker, not silently treated as a successful review.
+The task role uses `/using-git-worktrees`; `/implement` is used only for a Figma/UI implementation task because it is not a generic backend implementation skill. Bugfix uses `/systematic-debugging`; verification uses `/review` and report-only `/qa-only`, never mutating `/qa`. Research uses `/scrape` or `/browse` for web evidence and `/investigate` only for root-cause technical investigation. A missing required skill must be recorded as a blocker, not silently treated as a successful review.

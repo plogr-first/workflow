@@ -8,6 +8,7 @@ param(
   [ValidateSet('full','plan')][string]$Access = 'full',
   [string]$OpenCodeModel,
   [ValidateSet('task','verification','research')][string]$Profile,
+  [switch]$DeferActivation,
   [string]$ProjectRoot = (Get-Location).Path,
   [ValidateSet('right','down')][string]$Direction = 'right'
 )
@@ -73,7 +74,7 @@ if ($Access -eq 'full' -and $profileNativeArgs.Count) {
 }
 if ($Kind -eq 'opencode' -and $OpenCodeModel) { $OpenCodeModel=Resolve-OpenCodeModel $OpenCodeModel; $nativeArgs+=@('-m',$OpenCodeModel) }
 $date=Get-Date -Format 'yyyy-MM-dd';$stamp=Get-Date -Format 'HHmmss';$handoff=Join-Path $project "herdr\$Category\$date\$stamp--$Name--$Slug";New-Item -ItemType Directory -Force -Path $handoff|Out-Null
-$resultPath=Join-Path $handoff 'result.md';$briefPath=Join-Path $handoff 'brief.md';$statusPath=Join-Path $handoff 'status.json';$pane=$null;$agent=$null
+$resultPath=Join-Path $handoff 'result.md';$outcomePath=Join-Path $handoff 'outcome.json';$briefPath=Join-Path $handoff 'brief.md';$statusPath=Join-Path $handoff 'status.json';$pane=$null;$agent=$null
 $workflowReference = 'C:\Users\Lenovo\.codex\skills\herdr\references\dispatch-workflows.md'
 $roleContract = switch ($Profile) {
   'research' { @"
@@ -104,8 +105,14 @@ $roleContract
 
 Your `result.md` must state the workflow state (`candidate`, `passed`, `fix_required`, `blocked`, or `merged`), conclusion, commands/tests and outcomes, evidence, changed files, blockers, and confirmation that no secrets were recorded. Include the worktree/branch/commit/merge facts applicable to your role. For `research`, remain read-only unless the user explicitly requests changes.
 
+Before notifying completion, also write valid JSON to `$outcomePath` using this minimum schema:
+```json
+{ "state": "candidate|passed|fix_required|blocked|merged", "summary": "short evidence-backed result" }
+```
+Add `branch`, `base_sha`, `candidate_sha`, `merge_sha`, `blockers`, and `verification_commands` whenever applicable. The workflow monitor uses this file to wake the next Agent; a TUI reply alone is invalid.
+
 ## Mandatory completion contract
-Only after completing your role's required evidence, write full Markdown evidence to `$resultPath` and run:
+Only after completing your role's required evidence, write full Markdown evidence to `$resultPath` and valid JSON to `$outcomePath`, then run:
 `herdr notification show "Herdr: $Name 已完成" --body "$resultPath" --sound done`
 Do not report completion only in the TUI.
 "@ | Set-Content -LiteralPath $briefPath -Encoding utf8
@@ -115,12 +122,15 @@ Do not report completion only in the TUI.
   Start-Sleep -Seconds 7
   $agent=Start-AgentWhenPaneReady $pane $nativeArgs
   if(-not $agent -or $agent.agent -ne $Kind -or -not $agent.interactive_ready){throw 'Herdr did not return a confirmed interactive agent.'}
-  $status=[ordered]@{name=$Name;kind=$Kind;access=$Access;model=$OpenCodeModel;pane_id=$pane;started_at=(Get-Date -Format o);brief_path=$briefPath;result_path=$resultPath;start_result=$agent}
+  $status=[ordered]@{name=$Name;kind=$Kind;access=$Access;model=$OpenCodeModel;profile=$Profile;deferred=[bool]$DeferActivation;pane_id=$pane;started_at=(Get-Date -Format o);brief_path=$briefPath;result_path=$resultPath;outcome_path=$outcomePath;start_result=$agent}
   $status|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $statusPath -Encoding utf8
-  $message="Read $briefPath. Follow the workflow role contract exactly. Before completion write $resultPath with the required state and evidence, then send the exact Herdr completion notification stated in the brief. Final reply: summary plus result path only."
-  if($Kind -eq 'opencode'){Start-Sleep -Seconds 10;& herdr pane send-text $pane $message;& herdr pane send-keys $pane enter}else{& herdr agent prompt $Name $message|Out-Null}
-  $watcher=Join-Path $PSScriptRoot 'Watch-HerdrHandoff.ps1';$watchArgs="-NoProfile -ExecutionPolicy Bypass -File `"$watcher`" -AgentName `"$Name`" -StatusPath `"$statusPath`"";$watch=Start-Process -FilePath powershell.exe -ArgumentList $watchArgs -WindowStyle Hidden -PassThru
-  [pscustomobject]@{name=$Name;pane_id=$pane;handoff=$handoff;brief=$briefPath;result=$resultPath;status=$statusPath;watcher_pid=$watch.Id}|ConvertTo-Json -Depth 4
+  $watchPid=$null
+  if(-not $DeferActivation){
+    $message="Read $briefPath. You are $Name. Follow the workflow role contract exactly; reopen the brief at every phase boundary. Before completion write $resultPath and $outcomePath, then send the exact Herdr completion notification. A TUI reply alone is invalid. Final reply: summary plus result path only."
+    if($Kind -eq 'opencode'){Start-Sleep -Seconds 10;& herdr pane send-text $pane $message;& herdr pane send-keys $pane enter}else{& herdr agent prompt $Name $message|Out-Null}
+    $watcher=Join-Path $PSScriptRoot 'Watch-HerdrHandoff.ps1';$watchArgs="-NoProfile -ExecutionPolicy Bypass -File `"$watcher`" -AgentName `"$Name`" -StatusPath `"$statusPath`" -OutcomePath `"$outcomePath`"";$watch=Start-Process -FilePath powershell.exe -ArgumentList $watchArgs -WindowStyle Hidden -PassThru;$watchPid=$watch.Id
+  }
+  [pscustomobject]@{name=$Name;pane_id=$pane;handoff=$handoff;brief=$briefPath;result=$resultPath;outcome=$outcomePath;status=$statusPath;watcher_pid=$watchPid;deferred=[bool]$DeferActivation}|ConvertTo-Json -Depth 4
 } catch {
   [pscustomobject]@{failed_at=(Get-Date -Format o);error=$_.Exception.Message;pane_id=$pane;agent_detected=($null-ne $agent)}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $handoff 'failure.json') -Encoding utf8
   if($pane -and -not $agent){& herdr pane close $pane 2>$null|Out-Null}

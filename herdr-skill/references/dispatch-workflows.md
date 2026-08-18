@@ -36,8 +36,9 @@ Dispatch implementation using `-Profile task` and category `task`.
 1. Read the provided task brief and define observable acceptance checks before editing.
 2. Inspect the current Git tree and decide whether an isolated worktree is required. Use one for dirty shared trees, concurrent work, or overlap risk.
 3. Implement the smallest complete change. Use the project's test conventions; follow `implement`, `tdd`, and `codebase-design` principles where they fit the established seams.
-4. Run focused tests/type checks, then the relevant full validation. Commit the candidate change on its task branch.
-5. Report the worktree path, branch, base commit, candidate SHA, changed files, commands/results, and remaining limitations. Mark `candidate`; do not merge the candidate branch.
+4. When an API route, request/response schema, auth behaviour, or generated client changes, update the authoritative API contract/docs and prove the backend implementation, generated client/types, and a real endpoint/integration check agree.
+5. Run focused tests/type checks, then the relevant full validation. Commit the candidate change on its task branch.
+6. Report the worktree path, branch, base commit, candidate SHA, changed files, commands/results, and remaining limitations. Mark `candidate`; do not merge the candidate branch.
 
 ### Verification gate
 
@@ -47,6 +48,7 @@ The verification agent evaluates the candidate branch/worktree on four independe
 2. **Regression:** relevant automated checks pass; a changed behavioural path has a meaningful regression check, or the absence of a valid seam is documented.
 3. **Spec/scope:** the diff fulfills the brief without omitted requirements or unrequested scope expansion.
 4. **Standards/integration:** the diff complies with repository rules, no P0/P1 review finding remains, and Git integration can be performed safely.
+5. **API contract (when applicable):** authoritative API documentation/OpenAPI, backend route/controller/validation, generated client or types, and an actual endpoint/integration assertion agree on method, path, auth, request fields, response fields, status/error behaviour, and pagination/cursors where relevant.
 
 On pass, the verification agent merges into the intended target only after confirming the target worktree is clean and still at the expected base. It then reruns the applicable post-merge validation and reports `merged` with the merge SHA. If it cannot safely merge, it reports `blocked`; it does not force integration.
 

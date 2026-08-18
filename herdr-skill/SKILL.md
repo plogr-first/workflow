@@ -68,7 +68,40 @@ npx skills@latest add mattpocock/skills
 
 **停止规则：** 校验报告只包含可复现的 P0/P1 阻塞项，最多五项；主调度只允许复用原执行 Agent 做**一次**返工。复验仍不通过、无法安全合并、或缺少可复现 bug loop 时，状态为 `blocked` 并交给用户，不得在 Agent 间无限来回。
 
-**通过定义：** Agent `idle`、测试进程退出 0、或某一份 report 存在，都不是通过。任务/bugfix 只有四门全部通过、目标工作树干净且期望基线未变、合并后适用验证再次通过，才是 `merged`。资料搜寻只有每个决策关键主张都有恰当第一方证据或明确标注不确定，才是 `passed`。
+**通过定义：** Agent `idle`、测试进程退出 0、或某一份 report 存在，都不是通过。任务/bugfix 只有五门（含适用时 API contract）全部通过、目标工作树干净且期望基线未变、合并后适用验证再次通过，才是 `merged`。资料搜寻只有每个决策关键主张都有恰当第一方证据或明确标注不确定，才是 `passed`。
+
+### 自动唤醒编排器
+
+对于上述三条正式流，主调度必须使用 `Start-HerdrWorkflow.ps1`，而不是分别手动启动两个 Agent：它会同时创建执行 Agent 与处于 deferred 状态的校验 Agent，后台监控 `result.md + outcome.json` 后实际执行 `herdr agent prompt` 唤醒下一角色。
+
+```powershell
+& 'C:\Users\Lenovo\.codex\skills\herdr\scripts\Start-HerdrWorkflow.ps1' `
+  -Mode task -Slug api-timeout `
+  -Prompt '实现 API 超时重试；验收条件：……'
+
+& 'C:\Users\Lenovo\.codex\skills\herdr\scripts\Start-HerdrWorkflow.ps1' `
+  -Mode research -Slug payment-webhook-docs `
+  -Prompt '用第一方证据研究支付 webhook 的签名、重放与重试语义。'
+
+& 'C:\Users\Lenovo\.codex\skills\herdr\scripts\Start-HerdrWorkflow.ps1' `
+  -Mode bugfix -Slug login-session-loop `
+  -Prompt '复现并修复登录 session 循环；先建立红色可复现 loop。'
+```
+
+执行 Agent 每次完成或返工都必须同时覆写：
+
+```text
+result.md
+outcome.json
+```
+
+`outcome.json` 是最小机器状态协议，至少包含：
+
+```json
+{ "state": "candidate|passed|fix_required|blocked|merged", "summary": "short evidence-backed result" }
+```
+
+没有两个文件不会触发下一 Agent。长任务的初始提示会明确重复 Agent 名称、角色和“每个阶段重新打开 brief”的要求；返工唤醒也会再次携带同一身份与交接路径。校验 Agent 的 `fix_required` 会实际唤醒原执行 Agent；第二次未通过则停止为 `blocked`。
 
 ## 1. 固定交接命名
 

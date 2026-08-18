@@ -2,12 +2,14 @@
 param(
   [Parameter(Mandatory)][string]$AgentName,
   [Parameter(Mandatory)][string]$StatusPath,
+  [string]$OutcomePath,
   [int]$StartTimeoutSeconds = 120,
   [int]$PollSeconds = 5
 )
 $ErrorActionPreference = 'Stop'
 $status = Get-Content -LiteralPath $StatusPath -Raw | ConvertFrom-Json
 $resultPath = [string]$status.result_path
+if (-not $OutcomePath) { $OutcomePath = [string]$status.outcome_path }
 $pane = [string]$status.pane_id
 $kind = [string]$status.kind
 $deadline = (Get-Date).AddSeconds($StartTimeoutSeconds)
@@ -22,7 +24,7 @@ while ((Get-Date) -lt $deadline) {
     Notify "Herdr: $AgentName 需要处理" "Agent 被阻塞；请检查 $StatusPath" 'request'
     exit 0
   }
-  if ((Test-Path -LiteralPath $resultPath) -and ((Get-Item -LiteralPath $resultPath).Length -gt 0)) {
+  if ((Test-Path -LiteralPath $resultPath) -and ((Get-Item -LiteralPath $resultPath).Length -gt 0) -and (Test-Path -LiteralPath $OutcomePath) -and ((Get-Item -LiteralPath $OutcomePath).Length -gt 0)) {
     Notify "Herdr: $AgentName 交接已就绪" $resultPath
     exit 0
   }
@@ -33,7 +35,7 @@ if (-not $observedWork) {
   Notify "Herdr: $AgentName 未开始" "未观察到 working；请检查 $StatusPath" 'request'
   exit 0
 }
-$reminder = "交接检查发现你已返回但缺少 result.md。立即将完整结果写入 $resultPath，并运行 Herdr 完成通知。"
+$reminder = "交接检查发现你已返回但缺少完整交接。立即将完整结果写入 $resultPath，并将有效 workflow state JSON 写入 $OutcomePath，再运行 Herdr 完成通知。"
 if ($kind -eq 'opencode') {
   & herdr pane send-text $pane $reminder
   & herdr pane send-keys $pane enter
@@ -42,7 +44,7 @@ if ($kind -eq 'opencode') {
 }
 $repairDeadline = (Get-Date).AddSeconds(90)
 while ((Get-Date) -lt $repairDeadline) {
-  if ((Test-Path -LiteralPath $resultPath) -and ((Get-Item -LiteralPath $resultPath).Length -gt 0)) {
+  if ((Test-Path -LiteralPath $resultPath) -and ((Get-Item -LiteralPath $resultPath).Length -gt 0) -and (Test-Path -LiteralPath $OutcomePath) -and ((Get-Item -LiteralPath $OutcomePath).Length -gt 0)) {
     Notify "Herdr: $AgentName 补交已就绪" $resultPath
     exit 0
   }

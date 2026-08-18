@@ -146,11 +146,12 @@ function Select-Agent([string]$Role, [string]$RequestedKind, [string]$RequestedM
     if ([string]::IsNullOrWhiteSpace($RequestedModel)) {
       Write-Host ''
       Write-Host "Select OpenCode model for $Role agent:"
-      for ($i = 0; $i -lt $models.Count; $i++) { Write-Host ('  {0}) {1}' -f ($i + 1), $models[$i]) }
-      $modelChoice = Read-Host 'Model number or exact model ID'
+      for ($i = 0; $i -lt $models.Count; $i++) { Write-Host ('  [ ] {0}) {1}' -f ($i + 1), $models[$i]) }
+      $modelChoice = Read-Host 'Select one model number'
       $index = 0
-      if ([int]::TryParse($modelChoice, [ref]$index) -and $index -ge 1 -and $index -le $models.Count) { $model = $models[$index - 1] }
-      else { $model = Resolve-OpenCodeModel $modelChoice $models }
+      if (-not ([int]::TryParse($modelChoice, [ref]$index) -and $index -ge 1 -and $index -le $models.Count)) { throw "Select one listed OpenCode model number (1-$($models.Count))." }
+      $model = $models[$index - 1]
+      Write-Host ("  [x] {0}" -f $model)
     } else { $model = Resolve-OpenCodeModel $RequestedModel $models }
   }
   return [ordered]@{

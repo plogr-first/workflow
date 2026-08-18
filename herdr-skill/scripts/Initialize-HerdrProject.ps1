@@ -52,6 +52,35 @@ function Resolve-OpenCodeModel([string]$Requested, [string[]]$Models) {
   $normal=$key -replace '[^a-z0-9]',''; $fuzzy=@($Models|Where-Object{(($_ -replace '[^a-z0-9]','').ToLowerInvariant()).Contains($normal)})
   if($fuzzy.Count -eq 1){return $fuzzy[0]}; if($fuzzy.Count -gt 1){throw "OpenCode model '$Requested' is ambiguous: $($fuzzy -join ', ')"}; throw "OpenCode model '$Requested' is not currently available."
 }
+function Select-OpenCodeModelInteractive([string]$Role, [string[]]$Models) {
+  if ([Console]::IsInputRedirected) {
+    Write-Host "Select OpenCode model for $Role agent:"
+    for ($i = 0; $i -lt $Models.Count; $i++) { Write-Host ('  [ ] {0}) {1}' -f ($i + 1), $Models[$i]) }
+    $choice = Read-Host 'Select one model number'
+    $index = 0
+    if (-not ([int]::TryParse($choice, [ref]$index) -and $index -ge 1 -and $index -le $Models.Count)) { throw "Select one listed OpenCode model number (1-$($Models.Count))." }
+    return $Models[$index - 1]
+  }
+  $cursor = 0; $selected = -1
+  while ($true) {
+    Clear-Host
+    Write-Host "Select OpenCode model for $Role agent"
+    Write-Host '↑/↓ move   Space select   Enter confirm   Esc cancel'
+    Write-Host ''
+    for ($i = 0; $i -lt $Models.Count; $i++) {
+      $pointer = if($i -eq $cursor){'>'}else{' '}; $mark = if($i -eq $selected){'[x]'}else{'[ ]'}
+      Write-Host ('{0} {1} {2}' -f $pointer,$mark,$Models[$i])
+    }
+    $key = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+    switch ($key.VirtualKeyCode) {
+      38 { if($cursor -gt 0){$cursor--}; break }
+      40 { if($cursor -lt ($Models.Count - 1)){$cursor++}; break }
+      32 { $selected=$cursor; break }
+      13 { if($selected -ge 0){ return $Models[$selected] }; break }
+      27 { throw 'OpenCode model selection cancelled.' }
+    }
+  }
+}
 function Get-HerdrSessions {
   $raw = @(& herdr session list --json 2>&1)
   if ($LASTEXITCODE -ne 0) { throw "Unable to list Herdr sessions: $($raw -join ' ')" }
@@ -144,14 +173,7 @@ function Select-Agent([string]$Role, [string]$RequestedKind, [string]$RequestedM
   if ($kind -eq 'opencode') {
     $models = Get-OpenCodeModels
     if ([string]::IsNullOrWhiteSpace($RequestedModel)) {
-      Write-Host ''
-      Write-Host "Select OpenCode model for $Role agent:"
-      for ($i = 0; $i -lt $models.Count; $i++) { Write-Host ('  [ ] {0}) {1}' -f ($i + 1), $models[$i]) }
-      $modelChoice = Read-Host 'Select one model number'
-      $index = 0
-      if (-not ([int]::TryParse($modelChoice, [ref]$index) -and $index -ge 1 -and $index -le $models.Count)) { throw "Select one listed OpenCode model number (1-$($models.Count))." }
-      $model = $models[$index - 1]
-      Write-Host ("  [x] {0}" -f $model)
+      $model = Select-OpenCodeModelInteractive $Role $models
     } else { $model = Resolve-OpenCodeModel $RequestedModel $models }
   }
   return [ordered]@{

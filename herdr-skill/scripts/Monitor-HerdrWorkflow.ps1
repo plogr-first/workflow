@@ -42,6 +42,13 @@ function Test-OutcomeEvidence($Workflow, [string]$Role, $Outcome) {
   if ($Role -eq 'task' -and $Outcome.state -eq 'candidate' -and $Workflow.mode -ne 'research') {
     foreach($field in @('worktree_decision','worktree_path','branch','base_sha','candidate_sha')) { if([string]::IsNullOrWhiteSpace([string]$Outcome.$field)){return "candidate missing $field"} }
     if(@('isolated','in_place') -notcontains [string]$Outcome.worktree_decision){return 'invalid worktree_decision'}
+    $worktree=[string]$Outcome.worktree_path; $project=[string]$Workflow.project_root
+    if(-not (Test-Path -LiteralPath $worktree -PathType Container)){return 'candidate worktree_path does not exist'}
+    try {$worktree=(Resolve-Path -LiteralPath $worktree).Path; if($project){$project=(Resolve-Path -LiteralPath $project).Path}}catch{return 'candidate worktree_path cannot be resolved'}
+    if($Outcome.worktree_decision -eq 'in_place' -and $project -and $worktree -ne $project){return 'in_place worktree_path is not project_root'}
+    if($Outcome.worktree_decision -eq 'isolated' -and $project){$listed=@(& git -C $project worktree list --porcelain 2>$null | Where-Object {$_ -eq "worktree $worktree"});if(-not $listed.Count){return 'isolated worktree_path is not a registered git worktree'}}
+    & git -C $worktree cat-file -e "$($Outcome.candidate_sha)^{commit}" 2>$null; if($LASTEXITCODE -ne 0){return 'candidate_sha is not a commit in worktree'}
+    & git -C $worktree merge-base --is-ancestor $Outcome.base_sha $Outcome.candidate_sha 2>$null; if($LASTEXITCODE -ne 0){return 'base_sha is not an ancestor of candidate_sha'}
   }
   if ($Role -eq 'verification' -and @('passed','merged','fix_required') -contains [string]$Outcome.state) {
     $verification = Join-Path ([string]$entry.handoff) 'verification.md'

@@ -47,7 +47,22 @@ npx skills@latest add mattpocock/skills
 & 'C:\Users\Lenovo\.codex\skills\herdr\scripts\Install-HerdrInitCommand.ps1'
 ```
 
-它在用户级 PATH 前置 `C:\Users\Lenovo\.local\bin`，新开的终端即可使用 `herdr init`。不要覆盖官方 `herdr.exe`。
+它在用户级 PATH 前置 `C:\Users\Lenovo\.local\bin`，新开的 PowerShell/CMD 终端即可使用 `herdr init`。同时会安装 Bash 包装器：
+
+```text
+C:\Users\Lenovo\.local\bin\herdr
+/home/plogr/.local/bin/herdr       # 当前 WSL Ubuntu 默认用户
+```
+
+并在 WSL Bash 的 `~/.bashrc` 前置 `$HOME/.local/bin`。因此重新打开 Bash 后同样可执行：
+
+```bash
+herdr init
+herdr init --help
+herdr agent list     # 透明转发官方 herdr.exe
+```
+
+不要覆盖官方 `herdr.exe`。
 
 ## 0.5 前置检查（派遣）
 

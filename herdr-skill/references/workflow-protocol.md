@@ -51,3 +51,9 @@ Verification independently reruns original reproduction and regression check, co
 ## Verifier findings and repair
 
 A verifier reports only reproducible P0/P1 blockers, maximum five. Every item states acceptance gate, file/command evidence, and smallest required repair. It must not block on style preferences or findings already enforced by tooling. The controller reuses the same execution Agent and worktree for at most two repairs.
+
+## Durable resume and session identity
+
+`herdr init` binds a project profile to one named Herdr session. Every formal `workflow.json` records that session, a unique workflow ID, task/verifier Agent names, current role, and repair round. `herdr resume` only considers unfinished workflows in the bound project/session. It reads `events.jsonl`, handoff files, progress files, and Git/worktree state; it never infers identity from a pane title or chat history. If the recorded Agent is gone, it starts a replacement generation and updates the workflow state before continuing. Multiple resumable workflows require an explicit workflow ID or `--all`. Terminal states are never reactivated.
+
+The task role uses the available mattpocock implementation/debugging skill; verification uses the available review/QA and API-contract checks. A missing required skill must be recorded as a blocker, not silently treated as a successful review.

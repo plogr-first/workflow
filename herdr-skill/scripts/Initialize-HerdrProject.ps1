@@ -7,6 +7,7 @@ param(
   [string]$VerificationOpenCodeModel,
   [string]$ResearchKind,
   [string]$ResearchOpenCodeModel,
+  [string]$HerdrSessionName,
   [string[]]$TaskFullAccessArgs,
   [string[]]$VerificationFullAccessArgs,
   [string[]]$ResearchFullAccessArgs,
@@ -43,6 +44,49 @@ function Get-OpenCodeModels {
   $models = @((& opencode models 2>$null) -replace "`e\[[0-9;]*m", '' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
   if (-not $models.Count) { throw "Unable to obtain models from 'opencode models'." }
   return $models
+}
+function Get-HerdrSessions {
+  $raw = @(& herdr session list --json 2>&1)
+  if ($LASTEXITCODE -ne 0) { throw "Unable to list Herdr sessions: $($raw -join ' ')" }
+  try { $data = ($raw -join "`n") | ConvertFrom-Json } catch { throw 'Herdr session list did not return JSON.' }
+  return @($data.sessions | ForEach-Object { [string]$_.name } | Where-Object { $_ })
+}
+function Select-HerdrSession([string]$Requested) {
+  $sessions = @(Get-HerdrSessions)
+  if ($Requested) {
+    if ($sessions -notcontains $Requested) { throw "Herdr session '$Requested' does not exist. Available: $($sessions -join ', ')" }
+    return $Requested
+  }
+  if ($sessions.Count -eq 1) { return $sessions[0] }
+  Write-Host ''
+  Write-Host 'Select the Herdr persistent session for this project:'
+  for ($i=0; $i -lt $sessions.Count; $i++) { Write-Host ('  {0}) {1}' -f ($i + 1), $sessions[$i]) }
+  Write-Host '  N) Create a new named session'
+  $choice = (Read-Host 'Session number or new name').Trim()
+  $index = 0
+  if ([int]::TryParse($choice, [ref]$index) -and $index -ge 1 -and $index -le $sessions.Count) { return $sessions[$index - 1] }
+  if ($choice -match '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$') {
+    $newName = $choice.ToLowerInvariant()
+    if ($sessions -contains $newName) { return $newName }
+    $null = & herdr --session $newName status server 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Unable to create or open Herdr session '$newName'." }
+    return $newName
+  }
+  throw 'Invalid Herdr session selection.'
+}
+function Get-MattpockSkills([string]$Project) {
+  $roots = @(
+    (Join-Path $Project '.agents\skills'),
+    (Join-Path $env:USERPROFILE '.agents\skills'),
+    'F:\mattpock\.agents\skills'
+  ) | Select-Object -Unique
+  $names = @('implement','investigate','review','qa','systematic-debugging','test-driven-development','using-git-worktrees')
+  $out = [ordered]@{}
+  foreach ($name in $names) {
+    $hit = $roots | ForEach-Object { Join-Path $_ $name } | Where-Object { Test-Path (Join-Path $_ 'SKILL.md') } | Select-Object -First 1
+    $out[$name] = [ordered]@{ available = [bool]$hit; path = if($hit){(Resolve-Path $hit).Path}else{$null} }
+  }
+  return $out
 }
 function Assert-TerminalAgent([string]$Kind, [string[]]$SupportedKinds) {
   if ($SupportedKinds -notcontains $Kind.ToLowerInvariant()) {
@@ -112,6 +156,7 @@ function Select-Agent([string]$Role, [string]$RequestedKind, [string]$RequestedM
 }
 
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
+$session = Select-HerdrSession $HerdrSessionName
 $supportedKinds = Get-SupportedKinds
 $task = Select-Agent 'task' $TaskKind $TaskOpenCodeModel $TaskFullAccessArgs $supportedKinds
 $verification = Select-Agent 'verification' $VerificationKind $VerificationOpenCodeModel $VerificationFullAccessArgs $supportedKinds
@@ -120,12 +165,14 @@ $herdrDirectory = Join-Path $project 'herdr'
 New-Item -ItemType Directory -Force -Path $herdrDirectory | Out-Null
 $profilePath = Join-Path $herdrDirectory 'dispatch-profile.json'
 $profile = [ordered]@{
-  schema_version = 1
+  schema_version = 2
   initialized_at = (Get-Date -Format o)
   project_root = $project
+  herdr_session = [ordered]@{ name = $session; bound_at = (Get-Date -Format o) }
   task_agent = $task
   verification_agent = $verification
   research_agent = $research
+  mattpock_skills = (Get-MattpockSkills $project)
   skills_install_command = 'npx skills@latest add mattpocock/skills'
 }
 $profile | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $profilePath -Encoding utf8

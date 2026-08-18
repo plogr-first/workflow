@@ -40,7 +40,7 @@ $workflowPath = Join-Path $workflowRoot 'workflow.json'
 $eventsPath = Join-Path $workflowRoot 'events.jsonl'
 $workflow = [ordered]@{
   schema_version = 2; workflow_id = "wf-$stamp-$Slug"; mode = $Mode; slug = $Slug; session_name = $session
-  state = 'executing'; next_role = 'task'; repair_round = 0; max_repair_rounds = 2; created_at = (Get-Date -Format o); updated_at = (Get-Date -Format o)
+  state = 'executing'; next_role = 'task'; repair_round = 0; max_repair_rounds = 2; recovery_attempts = [ordered]@{ task = 0; verification = 0; max = 2 }; created_at = (Get-Date -Format o); updated_at = (Get-Date -Format o)
   last_processed = [ordered]@{ task_outcome_hash = $null; verifier_outcome_hash = $null }
   task = $task; verifier = $verifier
 }

@@ -22,7 +22,8 @@ function Append-Event([string]$Event, [hashtable]$Fields = @{}) {
   ($record | ConvertTo-Json -Compress -Depth 10) | Add-Content -LiteralPath $eventsPath -Encoding utf8
 }
 function Save-State($Workflow, [string]$State, [string]$NextRole) {
-  $Workflow.state = $State; $Workflow.next_role = $NextRole; $Workflow.updated_at = (Get-Date -Format o)
+  $Workflow.state = $State; $Workflow.next_role = $NextRole
+  $Workflow | Add-Member -Force -NotePropertyName updated_at -NotePropertyValue (Get-Date -Format o)
   Write-AtomicJson $Workflow $workflowPath
 }
 function Notify([string]$Title, [string]$Body, [string]$Sound = 'done') {

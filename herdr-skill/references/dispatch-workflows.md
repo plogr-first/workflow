@@ -8,7 +8,7 @@ Use exactly one of these flows. The main dispatcher owns state transitions and r
 - State names: `candidate`, `passed`, `fix_required`, `blocked`, `merged`.
 - The verification agent reports only reproducible P0/P1 blockers and at most five items. Each item names the acceptance rule, file/command evidence, and the smallest expected repair.
 - A verifier must not make speculative style suggestions a condition of passing. Standards findings that are already enforced by lint/format tools are not duplicated.
-- The dispatcher permits one repair round. It reuses the same execution agent and same worktree. The verifier then rechecks the reported changes and all affected gates. A second unresolved failure is `blocked`, not an infinite loop.
+- The dispatcher permits at most two repair rounds. It reuses the same execution agent and same worktree. The verifier then rechecks the reported changes and all affected gates. A third unresolved failure is `blocked`, not an infinite loop.
 - Never hide a failed gate by changing the acceptance rule. Never force a merge, reset, clean, stash, or overwrite unrelated work.
 
 ## 1. Deep research

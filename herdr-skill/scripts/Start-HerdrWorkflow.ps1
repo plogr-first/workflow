@@ -29,7 +29,7 @@ $workflowRoot = Join-Path $project ("herdr\\$Mode\\{0}\\{1}--workflow--{2}" -f (
 New-Item -ItemType Directory -Force -Path $workflowRoot | Out-Null
 $workflowPath = Join-Path $workflowRoot 'workflow.json'
 $workflow = [ordered]@{
-  schema_version = 1; mode = $Mode; slug = $Slug; state = 'running'; repair_round = 0; max_repair_rounds = 1; created_at = (Get-Date -Format o)
+  schema_version = 1; mode = $Mode; slug = $Slug; state = 'running'; repair_round = 0; max_repair_rounds = 2; created_at = (Get-Date -Format o)
   task = $task; verifier = $verifier
 }
 $workflow | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $workflowPath -Encoding utf8

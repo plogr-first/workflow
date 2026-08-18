@@ -24,7 +24,7 @@ herdr init
 该命令由本 Skill 安装的兼容包装器提供；除 `init` 外的全部 `herdr` 参数都会透明转发给官方 `herdr.exe`。初始化器依次选择并校验：
 
 1. **任务 Agent**：用于实现任务与 bugfix；
-2. **校验 Agent**：用于独立验收、一次返工后的复验，以及安全合并；
+2. **校验 Agent**：用于独立验收、最多两次返工后的复验，以及安全合并；
 3. **资料搜寻 Agent**：用于深度、证据驱动的资料探查；
 4. 三者都可选 `claude`、`gemini`、`codex`、`opencode` 或自定义 Herdr 支持 kind。OpenCode 的每一次选择都会从实时 `opencode models` 输出中选择模型；
 5. 所有内置 Agent 使用已验证的完全访问参数。自定义 kind 必须同时是当前 Herdr 支持 kind、在 PATH 中有同名可执行文件，且由用户提供其完全访问启动参数；不得猜测第三方 Agent 的危险模式参数。
@@ -62,11 +62,11 @@ npx skills@latest add mattpocock/skills
 
 | 场景 | 首次派遣 | 验收/结束 |
 |---|---|---|
-| 资料深度搜寻 | `-Profile research`，`-Category research` | `-Profile verification` 审计关键主张的来源、证据与覆盖范围；最多一次补证，不作文字润色循环。 |
+| 资料深度搜寻 | `-Profile research`，`-Category research` | `-Profile verification` 审计关键主张的来源、证据与覆盖范围；最多两次补证，不作文字润色循环。 |
 | 任务派发 | `-Profile task`，`-Category task` | 任务 Agent 产出提交的候选 worktree；`-Profile verification` 按 Outcome、Regression、Spec/scope、Standards/integration 四门验收，并仅在通过后安全合并和合并后复测。 |
 | Bug 修复 | `-Profile task`，`-Category bugfix` | 执行 Agent 必须先建立红色可复现 loop；验收 Agent 独立复跑原始复现和回归测试，再走四门验收/安全合并。 |
 
-**停止规则：** 校验报告只包含可复现的 P0/P1 阻塞项，最多五项；主调度只允许复用原执行 Agent 做**一次**返工。复验仍不通过、无法安全合并、或缺少可复现 bug loop 时，状态为 `blocked` 并交给用户，不得在 Agent 间无限来回。
+**停止规则：** 校验报告只包含可复现的 P0/P1 阻塞项，最多五项；主调度只允许复用原执行 Agent 做**最多两次**返工。第三次复验仍不通过、无法安全合并、或缺少可复现 bug loop 时，状态为 `blocked` 并交给用户，不得在 Agent 间无限来回。
 
 **通过定义：** Agent `idle`、测试进程退出 0、或某一份 report 存在，都不是通过。任务/bugfix 只有五门（含适用时 API contract）全部通过、目标工作树干净且期望基线未变、合并后适用验证再次通过，才是 `merged`。资料搜寻只有每个决策关键主张都有恰当第一方证据或明确标注不确定，才是 `passed`。
 
@@ -101,7 +101,7 @@ outcome.json
 { "state": "candidate|passed|fix_required|blocked|merged", "summary": "short evidence-backed result" }
 ```
 
-没有两个文件不会触发下一 Agent。长任务的初始提示会明确重复 Agent 名称、角色和“每个阶段重新打开 brief”的要求；返工唤醒也会再次携带同一身份与交接路径。校验 Agent 的 `fix_required` 会实际唤醒原执行 Agent；第二次未通过则停止为 `blocked`。
+没有两个文件不会触发下一 Agent。长任务的初始提示会明确重复 Agent 名称、角色和“每个阶段重新打开 brief”的要求；返工唤醒也会再次携带同一身份与交接路径。校验 Agent 的 `fix_required` 会实际唤醒原执行 Agent；两次返工后的第三次未通过则停止为 `blocked`。
 
 ## 1. 固定交接命名
 

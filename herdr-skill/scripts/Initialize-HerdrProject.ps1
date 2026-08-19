@@ -1,41 +1,156 @@
 [CmdletBinding()]
 param(
   [string]$ProjectRoot = (Get-Location).Path,
+  [string]$RootCauseKind,
+  [string]$RootCauseOpenCodeModel,
+  [string[]]$RootCauseFullAccessArgs,
+  [string]$RootCauseCommand,
   [string]$TaskKind,
   [string]$TaskOpenCodeModel,
+  [string[]]$TaskFullAccessArgs,
+  [string]$TaskCommand,
   [string]$VerificationKind,
   [string]$VerificationOpenCodeModel,
+  [string[]]$VerificationFullAccessArgs,
+  [string]$VerificationCommand,
   [string]$ResearchKind,
   [string]$ResearchOpenCodeModel,
+  [string[]]$ResearchFullAccessArgs,
+  [string]$ResearchCommand,
   [string]$HerdrSessionName,
   [ValidateSet('manual','after_merge','create_pr')][string]$PushPolicy,
   [string]$PushRemote,
   [switch]$SkipGitInit,
-  [string[]]$TaskFullAccessArgs,
-  [string[]]$VerificationFullAccessArgs,
-  [string[]]$ResearchFullAccessArgs,
   [switch]$SkipSkillsInstall,
   [switch]$Help
 )
 $ErrorActionPreference = 'Stop'
 if ($Help) {
 @"
-Herdr project initialization
+Herdr Project Initialization
 
 Run from a project root:
   herdr init
 
-The interactive flow selects task, verification, and research agents, validates
+The interactive flow selects root-cause, task, verification, and research agents, validates
 their terminal executables, installs official mattpocock/skills, verifies the engineering skill hashes,
 then writes herdr\dispatch-profile.json.
 
 Automation/testing options:
-  -ProjectRoot <path> -TaskKind <kind> -VerificationKind <kind> -ResearchKind <kind>
-  -TaskOpenCodeModel <id> -VerificationOpenCodeModel <id> -ResearchOpenCodeModel <id>
+  -ProjectRoot <path>
+  -RootCauseKind <kind> -TaskKind <kind> -VerificationKind <kind> -ResearchKind <kind>
+  -RootCauseOpenCodeModel <id> -TaskOpenCodeModel <id> -VerificationOpenCodeModel <id> -ResearchOpenCodeModel <id>
   -SkipSkillsInstall
 "@ | Write-Output
   exit 0
 }
+
+function Show-HerdrBanner {
+  $e = [char]27
+  function Write-Gradient([string]$text, [int[]]$startRgb, [int[]]$endRgb) {
+    $len = $text.Length
+    if ($len -le 1) { Write-Host $text; return }
+    $out = ""
+    for ($i = 0; $i -lt $len; $i++) {
+      $ratio = $i / ($len - 1)
+      $r = [int]($startRgb[0] + ($endRgb[0] - $startRgb[0]) * $ratio)
+      $g = [int]($startRgb[1] + ($endRgb[1] - $startRgb[1]) * $ratio)
+      $b = [int]($startRgb[2] + ($endRgb[2] - $startRgb[2]) * $ratio)
+      $out += "$e[38;2;${r};${g};${b}m" + $text[$i]
+    }
+    $out += "$e[0m"
+    Write-Host $out
+  }
+
+  $bannerLines = @(
+    "  _   _  _____  ____   ____   ____  ",
+    " | | | || ____||  _ \ |  _ \ |  _ \ ",
+    " | |_| ||  _|  | |_) || | | || |_) |",
+    " |  _  || |___ |  _ < | |_| ||  _ < ",
+    " |_| |_||_____||_| \_\|____/ |_| \_"
+  )
+
+  Write-Host ""
+  foreach ($line in $bannerLines) {
+    Write-Gradient $line @(56, 189, 248) @(236, 72, 153) # Sky Blue -> Vibrant Magenta Gradient
+  }
+  Write-Host ""
+  Write-Host "  $e[38;2;168;85;247m◆$e[0m $e[1;37mMulti-Agent Orchestrator$e[0m $e[38;2;100;116;139m•$e[0m $e[38;2;56;189;248mZero-Collision Workflows$e[0m $e[38;2;168;85;247m◆$e[0m"
+  Write-Host ""
+}
+
+function Select-InteractiveMenu {
+  param(
+    [string]$Title,
+    [string]$Subtitle = '',
+    [array]$Options,
+    [int]$DefaultIndex = 0
+  )
+  if ([Console]::IsInputRedirected) {
+    Write-Host "$Title" -ForegroundColor Cyan
+    if ($Subtitle) { Write-Host "$Subtitle" -ForegroundColor DarkGray }
+    for ($i = 0; $i -lt $Options.Count; $i++) {
+      $label = if ($Options[$i] -is [hashtable] -or $Options[$i] -is [System.Collections.IDictionary]) { $Options[$i].Label } else { $Options[$i] }
+      Write-Host ("  [{0}] {1}" -f ($i + 1), $label)
+    }
+    $choice = Read-Host "Choice (1-$($Options.Count)) [1]"
+    $idx = 0
+    if ([int]::TryParse($choice, [ref]$idx) -and $idx -ge 1 -and $idx -le $Options.Count) {
+      $val = $Options[$idx - 1]
+      return if ($val -is [hashtable] -or $val -is [System.Collections.IDictionary]) { $val.Value } else { $val }
+    }
+    $def = $Options[0]
+    return if ($def -is [hashtable] -or $def -is [System.Collections.IDictionary]) { $def.Value } else { $def }
+  }
+
+  $cursor = [Math]::Max(0, [Math]::Min($DefaultIndex, $Options.Count - 1))
+  $origCursorVisible = $true
+  try { $origCursorVisible = [Console]::CursorVisible; [Console]::CursorVisible = $false } catch {}
+
+  $startTop = [Console]::CursorTop
+  while ($true) {
+    [Console]::SetCursorPosition(0, $startTop)
+    Write-Host "┌─ $Title " -ForegroundColor Cyan -NoNewline
+    Write-Host "────────────────────────────────────────────────" -ForegroundColor DarkGray
+    if ($Subtitle) {
+      Write-Host "│  $Subtitle" -ForegroundColor DarkGray
+    }
+    Write-Host "│  Use ↑/↓ to navigate • Enter to select" -ForegroundColor DarkYellow
+    Write-Host "│" -ForegroundColor DarkGray
+    
+    for ($i = 0; $i -lt $Options.Count; $i++) {
+      $opt = $Options[$i]
+      $label = if ($opt -is [hashtable] -or $opt -is [System.Collections.IDictionary]) { $opt.Label } else { $opt }
+      if ($i -eq $cursor) {
+        Write-Host "│  " -ForegroundColor DarkGray -NoNewline
+        Write-Host " ❯ ● " -ForegroundColor Green -NoNewline
+        Write-Host "$label" -ForegroundColor White
+      } else {
+        Write-Host "│  " -ForegroundColor DarkGray -NoNewline
+        Write-Host "   ○ " -ForegroundColor DarkGray -NoNewline
+        Write-Host "$label" -ForegroundColor Gray
+      }
+    }
+    Write-Host "└─────────────────────────────────────────────────────" -ForegroundColor DarkGray
+
+    $key = [Console]::ReadKey($true)
+    switch ($key.Key) {
+      'UpArrow' { if ($cursor -gt 0) { $cursor-- } else { $cursor = $Options.Count - 1 } }
+      'DownArrow' { if ($cursor -lt ($Options.Count - 1)) { $cursor++ } else { $cursor = 0 } }
+      'Enter' {
+        try { [Console]::CursorVisible = $origCursorVisible } catch {}
+        Write-Host ""
+        $sel = $Options[$cursor]
+        return if ($sel -is [hashtable] -or $sel -is [System.Collections.IDictionary]) { $sel.Value } else { $sel }
+      }
+      'Escape' {
+        try { [Console]::CursorVisible = $origCursorVisible } catch {}
+        throw "Selection cancelled by user."
+      }
+    }
+  }
+}
+
 function Get-SupportedKinds {
   $help = ((& herdr agent start --help 2>&1) -join "`n")
   if ($LASTEXITCODE -ne 0) { throw "Unable to read Herdr agent kinds: $help" }
@@ -43,11 +158,13 @@ function Get-SupportedKinds {
   if (-not $match.Success) { throw 'Herdr did not expose supported agent kinds.' }
   return @($match.Groups[1].Value -split ',' | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
 }
+
 function Get-OpenCodeModels {
   $models = @((& opencode models 2>$null) -replace "`e\[[0-9;]*m", '' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
   if (-not $models.Count) { throw "Unable to obtain models from 'opencode models'." }
   return $models
 }
+
 function Resolve-OpenCodeModel([string]$Requested, [string[]]$Models) {
   $aliases = @{ 'zen'='opencode/deepseek-v4-flash-free'; 'zen-free'='opencode/deepseek-v4-flash-free'; 'deepseek-v4-flash-free'='opencode/deepseek-v4-flash-free'; 'go'='opencode-go/deepseek-v4-flash'; 'go-flash'='opencode-go/deepseek-v4-flash'; 'deepseek-v4-flash'='opencode-go/deepseek-v4-flash' }
   $key = $Requested.Trim().ToLowerInvariant(); if($aliases.ContainsKey($key)){$key=$aliases[$key]}
@@ -55,41 +172,19 @@ function Resolve-OpenCodeModel([string]$Requested, [string[]]$Models) {
   $normal=$key -replace '[^a-z0-9]',''; $fuzzy=@($Models|Where-Object{(($_ -replace '[^a-z0-9]','').ToLowerInvariant()).Contains($normal)})
   if($fuzzy.Count -eq 1){return $fuzzy[0]}; if($fuzzy.Count -gt 1){throw "OpenCode model '$Requested' is ambiguous: $($fuzzy -join ', ')"}; throw "OpenCode model '$Requested' is not currently available."
 }
+
 function Select-OpenCodeModelInteractive([string]$Role, [string[]]$Models) {
-  if ([Console]::IsInputRedirected) {
-    Write-Host "Select OpenCode model for $Role agent:"
-    for ($i = 0; $i -lt $Models.Count; $i++) { Write-Host ('  [ ] {0}) {1}' -f ($i + 1), $Models[$i]) }
-    $choice = Read-Host 'Select one model number'
-    $index = 0
-    if (-not ([int]::TryParse($choice, [ref]$index) -and $index -ge 1 -and $index -le $Models.Count)) { throw "Select one listed OpenCode model number (1-$($Models.Count))." }
-    return $Models[$index - 1]
-  }
-  $cursor = 0; $selected = -1
-  while ($true) {
-    Clear-Host
-    Write-Host "Select OpenCode model for $Role agent"
-    Write-Host '↑/↓ move   Space select   Enter confirm   Esc cancel'
-    Write-Host ''
-    for ($i = 0; $i -lt $Models.Count; $i++) {
-      $pointer = if($i -eq $cursor){'>'}else{' '}; $mark = if($i -eq $selected){'[x]'}else{'[ ]'}
-      Write-Host ('{0} {1} {2}' -f $pointer,$mark,$Models[$i])
-    }
-    $key = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
-    switch ($key.VirtualKeyCode) {
-      38 { if($cursor -gt 0){$cursor--}; break }
-      40 { if($cursor -lt ($Models.Count - 1)){$cursor++}; break }
-      32 { $selected=$cursor; break }
-      13 { if($selected -ge 0){ return $Models[$selected] }; break }
-      27 { throw 'OpenCode model selection cancelled.' }
-    }
-  }
+  $options = @($Models | ForEach-Object { @{ Label = $_; Value = $_ } })
+  return Select-InteractiveMenu -Title "Select OpenCode Model for $Role" -Subtitle "Choose the LLM backend for this agent" -Options $options
 }
+
 function Get-HerdrSessions {
   $raw = @(& herdr session list --json 2>&1)
   if ($LASTEXITCODE -ne 0) { throw "Unable to list Herdr sessions: $($raw -join ' ')" }
   try { $data = ($raw -join "`n") | ConvertFrom-Json } catch { throw 'Herdr session list did not return JSON.' }
   return @($data.sessions | ForEach-Object { [string]$_.name } | Where-Object { $_ })
 }
+
 function Select-HerdrSession([string]$Requested) {
   $sessions = @(Get-HerdrSessions)
   if ($Requested) {
@@ -97,24 +192,28 @@ function Select-HerdrSession([string]$Requested) {
     return $Requested
   }
   if ($sessions.Count -eq 1) { return $sessions[0] }
-  Write-Host ''
-  Write-Host 'Select the Herdr persistent session for this project:'
-  for ($i=0; $i -lt $sessions.Count; $i++) { Write-Host ('  {0}) {1}' -f ($i + 1), $sessions[$i]) }
-  Write-Host '  N) Create a new named session'
-  $choice = (Read-Host 'Session number or new name').Trim()
-  $index = 0
-  if ([int]::TryParse($choice, [ref]$index) -and $index -ge 1 -and $index -le $sessions.Count) { return $sessions[$index - 1] }
-  if ($choice -match '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$') {
-    $newName = $choice.ToLowerInvariant()
-    if ($sessions -contains $newName) { return $newName }
-    $null = & herdr --session $newName status server 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Unable to create or open Herdr session '$newName'." }
+
+  $options = @()
+  foreach ($s in $sessions) {
+    $options += @{ Label = "Use existing session: $s"; Value = $s }
+  }
+  $options += @{ Label = "[+] Create a new named session"; Value = '__NEW__' }
+
+  $choice = Select-InteractiveMenu -Title "Select Herdr Persistent Session" -Subtitle "All workflows for this project will run isolated in this session" -Options $options
+  if ($choice -eq '__NEW__') {
+    Write-Host "Enter new Herdr session name (e.g. dev, project-flow):" -ForegroundColor Cyan
+    $newName = (Read-Host "Session Name").Trim().ToLowerInvariant()
+    if ($newName -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$') { throw "Invalid session name '$newName'." }
+    if ($sessions -notcontains $newName) {
+      $null = & herdr --session $newName status server 2>&1
+      if ($LASTEXITCODE -ne 0) { throw "Unable to create or open Herdr session '$newName'." }
+    }
     return $newName
   }
-  throw 'Invalid Herdr session selection.'
+  return $choice
 }
+
 function Get-MattpockSkills([string]$Project) {
-  # Known official hashes for mattpocock engineering skills
   $knownOfficialHashes = @{
     'research'        = '0b6597c453178536b50c044a9e57cbc32dbffa47607a370e40768332f54bf8c2'
     'implement'       = '30cd7bc1ebfb3891e85a1eed3b3b81aea0fa4ad4553a784de7f8e421b2d223e0'
@@ -122,6 +221,9 @@ function Get-MattpockSkills([string]$Project) {
     'code-review'     = '9e72b65b58b39f0e5705a03f44fc4b31dc7089028d12c85b0a206b7af47cb24d'
     'tdd'             = '3a1102800fa8b3c4e1aa3f1fa9d18d3e4749ee8b5d86a3b560bbd53218dbf858'
   }
+  $auditSuitePath = "C:\Users\Lenovo\.agents\skills\audit-suite\SKILL.md"
+  $hasAuditSuite = Test-Path -LiteralPath $auditSuitePath
+
   $officialRoot = 'C:\Users\Lenovo\AppData\Local\Temp\mattpocock-skills-audit-20260818\skills\engineering'
   $roots = @(
     (Join-Path $Project '.agents\skills'),
@@ -138,46 +240,46 @@ function Get-MattpockSkills([string]$Project) {
     foreach($candidate in $candidates) {
       $candidateFile=Join-Path $candidate 'SKILL.md'
       $hash=(Get-FileHash -LiteralPath $candidateFile -Algorithm SHA256).Hash.ToLowerInvariant()
-      if(-not $expectedHash -or $hash -eq $expectedHash){$hit=(Resolve-Path -LiteralPath $candidate).Path;$actualHash=$hash;break}
+      if($expectedHash -and $hash -eq $expectedHash){$hit=$candidateFile;$actualHash=$hash;break}
+      if(-not $hit){$hit=$candidateFile;$actualHash=$hash}
     }
-    if (-not $hit -and $candidates.Count -gt 0) {
-      $hit = (Resolve-Path -LiteralPath $candidates[0]).Path
-      $actualHash = (Get-FileHash -LiteralPath (Join-Path $hit 'SKILL.md') -Algorithm SHA256).Hash.ToLowerInvariant()
-    }
-    $verified = if ($expectedHash -and $actualHash) { $expectedHash -eq $actualHash } elseif ($hit) { $true } else { $false }
+    $verified = ($expectedHash -and $actualHash -eq $expectedHash)
     $out[$name] = [ordered]@{
       available = [bool]$hit
       path = $hit
-      official_sha256 = $expectedHash
-      actual_sha256 = $actualHash
+      hash = $actualHash
       verified_official = $verified
+      expected_hash = $expectedHash
     }
+  }
+  $out['audit_suite'] = [ordered]@{
+    available = [bool]$hasAuditSuite
+    path = if ($hasAuditSuite) { $auditSuitePath } else { $null }
+    verified_official = $true
   }
   return $out
 }
+
 function Get-GitSetup([string]$Project, [bool]$AllowInit, [string]$RequestedPolicy, [string]$RequestedRemote, [bool]$Interactive) {
-  $inside = (& git -C $Project rev-parse --is-inside-work-tree 2>$null)
+  $isGit = (& git -c core.quotepath=false -C $Project rev-parse --is-inside-work-tree 2>$null)
   $initialized = $false
-  if ($LASTEXITCODE -ne 0 -or $inside -ne 'true') {
-    if (-not $AllowInit) { return [ordered]@{ repository = $false; initialized_by_herdr = $false; has_commit = $false; target_branch = $null; push_policy = 'manual'; push_remote = $null } }
-    & git -C $Project init | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "git init failed in $Project." }
+  if ($LASTEXITCODE -ne 0 -or [string]$isGit -ne 'true') {
+    if (-not $AllowInit) {
+      return [ordered]@{ repository = $false; initialized_by_herdr = $false; has_commit = $false; target_branch = $null; push_policy = 'manual'; push_remote = $null; remotes = @(); use_gh_cli = $false; github = $null }
+    }
+    & git -c core.quotepath=false -C $Project init 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Unable to initialize Git repository in $Project." }
     $initialized = $true
-    $ignorePath = Join-Path $Project '.gitignore'
-    $ignoreLines = if(Test-Path $ignorePath){@(Get-Content -LiteralPath $ignorePath)}else{@()}
-    foreach($line in @('herdr/','.worktrees/')) { if($ignoreLines -notcontains $line){Add-Content -LiteralPath $ignorePath -Value $line -Encoding utf8} }
   }
-  $branch = (& git -C $Project branch --show-current 2>$null).Trim()
-  $hasCommit = ((& git -C $Project rev-parse --verify HEAD 2>$null) -and $LASTEXITCODE -eq 0)
-  $remotes = @((& git -C $Project remote 2>$null) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  $head = (& git -c core.quotepath=false -C $Project rev-parse --verify HEAD 2>$null)
+  $hasCommit = ($LASTEXITCODE -eq 0)
+  $branch = if ($hasCommit) { (& git -c core.quotepath=false -C $Project rev-parse --abbrev-ref HEAD 2>$null) } else { $null }
+  $remotes = @((& git -c core.quotepath=false -C $Project remote 2>$null) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
   $hasGh = [bool](Get-Command -Name 'gh' -CommandType Application -ErrorAction SilentlyContinue)
-  $githubInfo = [ordered]@{
-    is_github = $false
-    gh_cli_available = $hasGh
-    gh_authenticated = $false
-    remote_url = $null
-    repo = $null
-  }
+  $policy = if ($RequestedPolicy) { $RequestedPolicy } else { 'manual' }
+  $remote = $RequestedRemote
+
+  $githubInfo = [ordered]@{ is_github = $false; remote_url = $null; repo = $null; gh_authenticated = $false }
   if ($remotes.Count -gt 0) {
     $firstRemote = if ($remote) { $remote } else { $remotes[0] }
     $remoteUrl = (& git -c core.quotepath=false -C $Project remote get-url $firstRemote 2>$null)
@@ -191,30 +293,35 @@ function Get-GitSetup([string]$Project, [bool]$AllowInit, [string]$RequestedPoli
       }
     }
   }
+
   if (-not $RequestedPolicy -and $Interactive -and $remotes.Count -gt 0) {
-    Write-Host ''
-    Write-Host 'Post-merge submission policy:'
-    Write-Host '  0) Keep merges local (manual push)'
-    for($i=0;$i -lt $remotes.Count;$i++){
-      $remName = $remotes[$i]
-      Write-Host ('  {0}) Push after merge to {1} (using {2})' -f ($i+1), $remName, (if($githubInfo.is_github -and $hasGh){'GitHub CLI / gh'}else{'git push'}))
+    $options = @()
+    $options += @{ Label = "Keep merges local (manual push / no auto-push)"; Value = 'manual' }
+    foreach ($r in $remotes) {
+      $options += @{ Label = "Push after merge to $r (using git/gh)"; Value = "push:$r" }
     }
     if ($githubInfo.is_github -and $hasGh) {
-      $prIndex = $remotes.Count + 1
-      Write-Host ('  {0}) Create GitHub Pull Request via gh CLI' -f $prIndex)
+      $options += @{ Label = "Create GitHub Pull Request via gh CLI automatically"; Value = 'create_pr' }
     }
-    $maxChoice = if ($githubInfo.is_github -and $hasGh) { $remotes.Count + 1 } else { $remotes.Count }
-    $choice=Read-Host 'Choice [0]'; $index=0
-    if(-not [string]::IsNullOrWhiteSpace($choice)){
-      if(-not ([int]::TryParse($choice,[ref]$index) -and $index -ge 0 -and $index -le $maxChoice)){throw 'Invalid post-merge submission selection.'}
-      if($index -gt 0 -and $index -le $remotes.Count){$policy='after_merge';$remote=$remotes[$index-1]}
-      elseif($index -eq ($remotes.Count + 1)){$policy='create_pr';$remote=$remotes[0]}
+
+    $chosen = Select-InteractiveMenu -Title "Select Post-Merge Submission Policy" -Subtitle "How should Herdr handle code after independent verification passes?" -Options $options
+    if ($chosen -eq 'manual') {
+      $policy = 'manual'
+      $remote = $null
+    } elseif ($chosen -eq 'create_pr') {
+      $policy = 'create_pr'
+      $remote = $remotes[0]
+    } elseif ($chosen -like 'push:*') {
+      $policy = 'after_merge'
+      $remote = $chosen.Substring(5)
     }
   }
+
   if (@('after_merge','create_pr') -contains $policy) {
     if (-not $remote) { if($remotes.Count -eq 1){$remote=$remotes[0]}else{throw "Push policy $policy requires -PushRemote or exactly one configured git remote."} }
     if ($remotes -notcontains $remote) { throw "Git remote '$remote' is not configured in $Project." }
   } else { $remote=$null }
+
   return [ordered]@{
     repository = $true
     initialized_by_herdr = $initialized
@@ -227,6 +334,7 @@ function Get-GitSetup([string]$Project, [bool]$AllowInit, [string]$RequestedPoli
     github = $githubInfo
   }
 }
+
 function Assert-TerminalAgent([string]$Kind, [string[]]$SupportedKinds) {
   if ($SupportedKinds -notcontains $Kind.ToLowerInvariant()) {
     throw "'$Kind' is not a Herdr-supported kind. Supported kinds: $($SupportedKinds -join ', ')"
@@ -239,6 +347,7 @@ function Assert-TerminalAgent([string]$Kind, [string[]]$SupportedKinds) {
   if ($LASTEXITCODE -ne 0) { throw "Terminal executable '$Kind' could not be validated with --version or -v." }
   return $executable
 }
+
 function Get-FullAccessArgs([string]$Kind, [string[]]$ProvidedArgs, [bool]$Interactive) {
   $known = @{
     'claude'   = @('--dangerously-skip-permissions')
@@ -248,68 +357,95 @@ function Get-FullAccessArgs([string]$Kind, [string[]]$ProvidedArgs, [bool]$Inter
   }
   if ($known.ContainsKey($Kind)) { return @($known[$Kind]) }
   if ($ProvidedArgs -and $ProvidedArgs.Count) { return @($ProvidedArgs) }
-  if (-not $Interactive) { throw "Custom agent '$Kind' requires -<Role>FullAccessArgs." }
-  $raw = Read-Host "Enter the full-access launch arguments for '$Kind' (space separated)"
+  if (-not $Interactive) { throw "Custom agent '$Kind' requires full-access launch arguments." }
+  Write-Host "Enter the full-access launch arguments for '$Kind' (space separated, e.g. --yolo):" -ForegroundColor Cyan
+  $raw = Read-Host "Full Access Args"
   $args = @($raw -split '\s+' | Where-Object { $_ })
   if (-not $args.Count) { throw "Custom agent '$Kind' requires explicit full-access launch arguments." }
   return $args
 }
-function Select-Agent([string]$Role, [string]$RequestedKind, [string]$RequestedModel, [string[]]$ProvidedArgs, [string[]]$SupportedKinds) {
+
+function Select-Agent([string]$RoleTitle, [string]$RoleKey, [string]$RequestedKind, [string]$RequestedModel, [string[]]$ProvidedArgs, [string]$CustomCommand, [string[]]$SupportedKinds) {
   $interactive = [string]::IsNullOrWhiteSpace($RequestedKind)
   if ($interactive) {
-    Write-Host ''
-    Write-Host "Select $Role agent (all profiles launch with full access):"
-    Write-Host '  1) claude'
-    Write-Host '  2) gemini'
-    Write-Host '  3) codex'
-    Write-Host '  4) opencode'
-    Write-Host '  5) custom Herdr-supported kind'
-    $choice = Read-Host 'Choice'
-    $map = @{ '1'='claude'; '2'='gemini'; '3'='codex'; '4'='opencode' }
-    if ($map.ContainsKey($choice)) { $RequestedKind = $map[$choice] }
-    elseif ($choice -eq '5') { $RequestedKind = (Read-Host 'Custom Herdr kind').Trim().ToLowerInvariant() }
-    else { throw "Invalid $Role agent choice: $choice" }
+    $options = @(
+      @{ Label = "claude   - Anthropic Claude Code CLI (Recommended for research/audit)"; Value = 'claude' },
+      @{ Label = "codex    - OpenAI Codex CLI (Recommended for verification)"; Value = 'codex' },
+      @{ Label = "opencode - OpenCode Full-Screen TUI / DeepSeek Models"; Value = 'opencode' },
+      @{ Label = "gemini   - Google Gemini CLI"; Value = 'gemini' },
+      @{ Label = "custom   - Custom command executable (User defined in PowerShell)"; Value = 'custom' }
+    )
+    $chosen = Select-InteractiveMenu -Title "Configure $RoleTitle ($RoleKey)" -Subtitle "Select the AI Agent engine for this specific workflow node" -Options $options
+    if ($chosen -eq 'custom') {
+      Write-Host "Enter custom executable or PowerShell command for $RoleTitle:" -ForegroundColor Cyan
+      $cmd = (Read-Host "Command").Trim()
+      if (-not $cmd) { throw "Custom command for $RoleTitle cannot be empty." }
+      $RequestedKind = $cmd
+    } else {
+      $RequestedKind = $chosen
+    }
   }
+
   $kind = $RequestedKind.Trim().ToLowerInvariant()
-  $command = Assert-TerminalAgent $kind $SupportedKinds
+  $executable = $kind
+  if ($SupportedKinds -contains $kind) {
+    $executable = Assert-TerminalAgent $kind $SupportedKinds
+  } else {
+    $cmdObj = Get-Command -Name $kind -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmdObj) { $executable = $cmdObj.Source }
+  }
+
   $model = $null
   if ($kind -eq 'opencode') {
     $models = Get-OpenCodeModels
     if ([string]::IsNullOrWhiteSpace($RequestedModel)) {
-      $model = Select-OpenCodeModelInteractive $Role $models
+      $model = Select-OpenCodeModelInteractive $RoleTitle $models
     } else { $model = Resolve-OpenCodeModel $RequestedModel $models }
   }
+
   return [ordered]@{
+    role = $RoleKey
     kind = $kind
-    executable = $command
+    executable = $executable
     model = $model
     full_access_args = @(Get-FullAccessArgs $kind $ProvidedArgs $interactive)
   }
 }
+
+# --- Main Execution Flow ---
+Show-HerdrBanner
 
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $interactiveSetup = [string]::IsNullOrWhiteSpace($TaskKind) -or [string]::IsNullOrWhiteSpace($VerificationKind) -or [string]::IsNullOrWhiteSpace($ResearchKind)
 $git = Get-GitSetup $project (-not $SkipGitInit) $PushPolicy $PushRemote $interactiveSetup
 $session = Select-HerdrSession $HerdrSessionName
 $supportedKinds = Get-SupportedKinds
-$task = Select-Agent 'task' $TaskKind $TaskOpenCodeModel $TaskFullAccessArgs $supportedKinds
-$verification = Select-Agent 'verification' $VerificationKind $VerificationOpenCodeModel $VerificationFullAccessArgs $supportedKinds
-$research = Select-Agent 'research' $ResearchKind $ResearchOpenCodeModel $ResearchFullAccessArgs $supportedKinds
+
+$rootCause = Select-Agent 'Root-Cause & Audit Agent' 'root_cause' $RootCauseKind $RootCauseOpenCodeModel $RootCauseFullAccessArgs $RootCauseCommand $supportedKinds
+$task = Select-Agent 'Task & Implementation Agent' 'task' $TaskKind $TaskOpenCodeModel $TaskFullAccessArgs $TaskCommand $supportedKinds
+$verification = Select-Agent 'Verification & Integration Agent' 'verification' $VerificationKind $VerificationOpenCodeModel $VerificationFullAccessArgs $VerificationCommand $supportedKinds
+$research = Select-Agent 'Deep Research Agent' 'research' $ResearchKind $ResearchOpenCodeModel $ResearchFullAccessArgs $ResearchCommand $supportedKinds
+
 $herdrDirectory = Join-Path $project 'herdr'
 New-Item -ItemType Directory -Force -Path $herdrDirectory | Out-Null
 $profilePath = Join-Path $herdrDirectory 'dispatch-profile.json'
+
 if (-not $SkipSkillsInstall) {
-  Write-Host 'Starting project skill installation: npx skills@latest add mattpocock/skills'
+  Write-Host "Installing required official Matt Pocock engineering skills via npx skills..." -ForegroundColor Cyan
   Push-Location $project
   try { & npx skills@latest add mattpocock/skills } finally { Pop-Location }
-  if ($LASTEXITCODE -ne 0) { throw "skills installation failed with exit code $LASTEXITCODE. No Herdr profile was written." }
-} else { Write-Host 'Skipped skills installation by request.' }
+  if ($LASTEXITCODE -ne 0) { throw "Skills installation failed with exit code $LASTEXITCODE. No Herdr profile was written." }
+} else {
+  Write-Host "Skipped skills installation by request." -ForegroundColor DarkGray
+}
+
 $mattpockSkills = Get-MattpockSkills $project
 $profile = [ordered]@{
-  schema_version = 3
+  schema_version = 4
   initialized_at = (Get-Date -Format o)
   project_root = $project
   herdr_session = [ordered]@{ name = $session; bound_at = (Get-Date -Format o) }
+  root_cause_agent = $rootCause
   task_agent = $task
   verification_agent = $verification
   research_agent = $research
@@ -318,8 +454,16 @@ $profile = [ordered]@{
   skills_install_command = 'npx skills@latest add mattpocock/skills'
 }
 $profile | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $profilePath -Encoding utf8
-Write-Host "Herdr profile written: $profilePath"
-Write-Host "Task: $($task.kind)$($(if($task.model){' / ' + $task.model}else{''}))"
-Write-Host "Verification: $($verification.kind)$($(if($verification.model){' / ' + $verification.model}else{''}))"
-Write-Host "Research: $($research.kind)$($(if($research.model){' / ' + $research.model}else{''}))"
-Write-Host "Git: repository=$($git.repository), initialized_by_herdr=$($git.initialized_by_herdr), has_commit=$($git.has_commit), push_policy=$($git.push_policy)$($(if($git.push_remote){' / ' + $git.push_remote}else{''}))"
+
+Write-Host ""
+Write-Host "┌─────────────────────────────────────────────────────────────┐" -ForegroundColor Green
+Write-Host "│  HERDR PROFILE INITIALIZED SUCCESSFULLY                     │" -ForegroundColor Green
+Write-Host "└─────────────────────────────────────────────────────────────┘" -ForegroundColor Green
+Write-Host "  Profile: $profilePath" -ForegroundColor White
+Write-Host "  Session: $session" -ForegroundColor Cyan
+Write-Host "  Root-Cause Agent: $($rootCause.kind)$($(if($rootCause.model){' / ' + $rootCause.model}else{''}))" -ForegroundColor White
+Write-Host "  Task Agent:       $($task.kind)$($(if($task.model){' / ' + $task.model}else{''}))" -ForegroundColor White
+Write-Host "  Verifier Agent:   $($verification.kind)$($(if($verification.model){' / ' + $verification.model}else{''}))" -ForegroundColor White
+Write-Host "  Research Agent:   $($research.kind)$($(if($research.model){' / ' + $research.model}else{''}))" -ForegroundColor White
+Write-Host "  Git Push Policy:  $($git.push_policy)$($(if($git.push_remote){' (' + $git.push_remote + ')'}else{''}))" -ForegroundColor DarkGray
+Write-Host ""

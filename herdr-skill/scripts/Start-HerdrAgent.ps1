@@ -7,7 +7,7 @@ param(
   [Parameter(Mandatory)][string]$Prompt,
   [ValidateSet('full','plan')][string]$Access = 'full',
   [string]$OpenCodeModel,
-  [ValidateSet('task','verification','research')][string]$Profile,
+  [ValidateSet('root_cause','task','verification','research')][string]$Profile,
   [switch]$DeferActivation,
   [string]$ProjectRoot = (Get-Location).Path,
   [ValidateSet('right','down')][string]$Direction = 'right',
@@ -79,7 +79,7 @@ if ($Profile) {
   Ensure-HerdrSessionRunning $script:HerdrSession
   $gitProfile = $dispatchProfile.git
   $skillManifest = $dispatchProfile.mattpocock_skills
-  $entry = switch ($Profile) { 'task' { $dispatchProfile.task_agent }; 'verification' { $dispatchProfile.verification_agent }; 'research' { $dispatchProfile.research_agent } }
+  $entry = switch ($Profile) { 'root_cause' { if ($dispatchProfile.root_cause_agent) { $dispatchProfile.root_cause_agent } else { $dispatchProfile.task_agent } }; 'task' { $dispatchProfile.task_agent }; 'verification' { $dispatchProfile.verification_agent }; 'research' { $dispatchProfile.research_agent } }
   if (-not $entry -or -not $entry.kind) { throw "Profile '$Profile' is incomplete in $profilePath." }
   $Kind = [string]$entry.kind
   if ($entry.model) { $OpenCodeModel = [string]$entry.model }

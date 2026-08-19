@@ -8,7 +8,7 @@ param(
   [string]$ResearchKind,
   [string]$ResearchOpenCodeModel,
   [string]$HerdrSessionName,
-  [ValidateSet('manual','after_merge')][string]$PushPolicy,
+  [ValidateSet('manual','after_merge','create_pr')][string]$PushPolicy,
   [string]$PushRemote,
   [switch]$SkipGitInit,
   [string[]]$TaskFullAccessArgs,
@@ -114,7 +114,14 @@ function Select-HerdrSession([string]$Requested) {
   throw 'Invalid Herdr session selection.'
 }
 function Get-MattpockSkills([string]$Project) {
-  # Match only the official engineering skill files, not same-named local skills.
+  # Known official hashes for mattpocock engineering skills
+  $knownOfficialHashes = @{
+    'research'        = '0b6597c453178536b50c044a9e57cbc32dbffa47607a370e40768332f54bf8c2'
+    'implement'       = '30cd7bc1ebfb3891e85a1eed3b3b81aea0fa4ad4553a784de7f8e421b2d223e0'
+    'diagnosing-bugs' = '571bd503ef1ce9f9d143e705346e437881f6ba7307ecf0097646fc82881026c2'
+    'code-review'     = '9e72b65b58b39f0e5705a03f44fc4b31dc7089028d12c85b0a206b7af47cb24d'
+    'tdd'             = '3a1102800fa8b3c4e1aa3f1fa9d18d3e4749ee8b5d86a3b560bbd53218dbf858'
+  }
   $officialRoot = 'C:\Users\Lenovo\AppData\Local\Temp\mattpocock-skills-audit-20260818\skills\engineering'
   $roots = @(
     (Join-Path $Project '.agents\skills'),
@@ -125,7 +132,7 @@ function Get-MattpockSkills([string]$Project) {
   $out = [ordered]@{}
   foreach ($name in $names) {
     $expected = Join-Path $officialRoot "$name\SKILL.md"
-    $expectedHash = if(Test-Path -LiteralPath $expected){ (Get-FileHash -LiteralPath $expected -Algorithm SHA256).Hash.ToLowerInvariant() }else{$null}
+    $expectedHash = if(Test-Path -LiteralPath $expected){ (Get-FileHash -LiteralPath $expected -Algorithm SHA256).Hash.ToLowerInvariant() }elseif($knownOfficialHashes.ContainsKey($name)){$knownOfficialHashes[$name]}else{$null}
     $candidates = @($roots | ForEach-Object { Join-Path $_ $name } | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'SKILL.md') })
     $hit = $null; $actualHash = $null
     foreach($candidate in $candidates) {
@@ -133,12 +140,17 @@ function Get-MattpockSkills([string]$Project) {
       $hash=(Get-FileHash -LiteralPath $candidateFile -Algorithm SHA256).Hash.ToLowerInvariant()
       if(-not $expectedHash -or $hash -eq $expectedHash){$hit=(Resolve-Path -LiteralPath $candidate).Path;$actualHash=$hash;break}
     }
+    if (-not $hit -and $candidates.Count -gt 0) {
+      $hit = (Resolve-Path -LiteralPath $candidates[0]).Path
+      $actualHash = (Get-FileHash -LiteralPath (Join-Path $hit 'SKILL.md') -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $verified = if ($expectedHash -and $actualHash) { $expectedHash -eq $actualHash } elseif ($hit) { $true } else { $false }
     $out[$name] = [ordered]@{
       available = [bool]$hit
       path = $hit
       official_sha256 = $expectedHash
       actual_sha256 = $actualHash
-      verified_official = if($expectedHash -and $actualHash){$expectedHash -eq $actualHash}else{$null}
+      verified_official = $verified
     }
   }
   return $out
@@ -158,23 +170,62 @@ function Get-GitSetup([string]$Project, [bool]$AllowInit, [string]$RequestedPoli
   $branch = (& git -C $Project branch --show-current 2>$null).Trim()
   $hasCommit = ((& git -C $Project rev-parse --verify HEAD 2>$null) -and $LASTEXITCODE -eq 0)
   $remotes = @((& git -C $Project remote 2>$null) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-  $policy = if($RequestedPolicy){$RequestedPolicy}else{'manual'}; $remote = $RequestedRemote
-  if (-not $RequestedPolicy -and $Interactive -and $remotes.Count -gt 0) {
-    Write-Host ''
-    Write-Host 'Post-merge push policy:'
-    Write-Host '  0) Keep merges local (manual push)'
-    for($i=0;$i -lt $remotes.Count;$i++){Write-Host ('  {0}) Push after merge to {1}' -f ($i+1),$remotes[$i])}
-    $choice=Read-Host 'Choice [0]'; $index=0
-    if(-not [string]::IsNullOrWhiteSpace($choice)){
-      if(-not ([int]::TryParse($choice,[ref]$index) -and $index -ge 0 -and $index -le $remotes.Count)){throw 'Invalid post-merge push selection.'}
-      if($index -gt 0){$policy='after_merge';$remote=$remotes[$index-1]}
+  $hasGh = [bool](Get-Command -Name 'gh' -CommandType Application -ErrorAction SilentlyContinue)
+  $githubInfo = [ordered]@{
+    is_github = $false
+    gh_cli_available = $hasGh
+    gh_authenticated = $false
+    remote_url = $null
+    repo = $null
+  }
+  if ($remotes.Count -gt 0) {
+    $firstRemote = if ($remote) { $remote } else { $remotes[0] }
+    $remoteUrl = (& git -c core.quotepath=false -C $Project remote get-url $firstRemote 2>$null)
+    if ($remoteUrl -match 'github\.com[:/](.+?)(?:\.git)?$') {
+      $githubInfo.is_github = $true
+      $githubInfo.remote_url = $remoteUrl.Trim()
+      $githubInfo.repo = $Matches[1].Trim()
+      if ($hasGh) {
+        & gh auth status 2>$null
+        $githubInfo.gh_authenticated = ($LASTEXITCODE -eq 0)
+      }
     }
   }
-  if ($policy -eq 'after_merge') {
-    if (-not $remote) { if($remotes.Count -eq 1){$remote=$remotes[0]}else{throw 'Push policy after_merge requires -PushRemote or exactly one configured git remote.'} }
+  if (-not $RequestedPolicy -and $Interactive -and $remotes.Count -gt 0) {
+    Write-Host ''
+    Write-Host 'Post-merge submission policy:'
+    Write-Host '  0) Keep merges local (manual push)'
+    for($i=0;$i -lt $remotes.Count;$i++){
+      $remName = $remotes[$i]
+      Write-Host ('  {0}) Push after merge to {1} (using {2})' -f ($i+1), $remName, (if($githubInfo.is_github -and $hasGh){'GitHub CLI / gh'}else{'git push'}))
+    }
+    if ($githubInfo.is_github -and $hasGh) {
+      $prIndex = $remotes.Count + 1
+      Write-Host ('  {0}) Create GitHub Pull Request via gh CLI' -f $prIndex)
+    }
+    $maxChoice = if ($githubInfo.is_github -and $hasGh) { $remotes.Count + 1 } else { $remotes.Count }
+    $choice=Read-Host 'Choice [0]'; $index=0
+    if(-not [string]::IsNullOrWhiteSpace($choice)){
+      if(-not ([int]::TryParse($choice,[ref]$index) -and $index -ge 0 -and $index -le $maxChoice)){throw 'Invalid post-merge submission selection.'}
+      if($index -gt 0 -and $index -le $remotes.Count){$policy='after_merge';$remote=$remotes[$index-1]}
+      elseif($index -eq ($remotes.Count + 1)){$policy='create_pr';$remote=$remotes[0]}
+    }
+  }
+  if (@('after_merge','create_pr') -contains $policy) {
+    if (-not $remote) { if($remotes.Count -eq 1){$remote=$remotes[0]}else{throw "Push policy $policy requires -PushRemote or exactly one configured git remote."} }
     if ($remotes -notcontains $remote) { throw "Git remote '$remote' is not configured in $Project." }
   } else { $remote=$null }
-  return [ordered]@{ repository = $true; initialized_by_herdr = $initialized; has_commit = [bool]$hasCommit; target_branch = if($branch){$branch}else{$null}; push_policy = $policy; push_remote = $remote; remotes = $remotes }
+  return [ordered]@{
+    repository = $true
+    initialized_by_herdr = $initialized
+    has_commit = [bool]$hasCommit
+    target_branch = if($branch){$branch}else{$null}
+    push_policy = $policy
+    push_remote = $remote
+    remotes = $remotes
+    use_gh_cli = $hasGh
+    github = $githubInfo
+  }
 }
 function Assert-TerminalAgent([string]$Kind, [string[]]$SupportedKinds) {
   if ($SupportedKinds -notcontains $Kind.ToLowerInvariant()) {

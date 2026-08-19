@@ -60,8 +60,8 @@ $bash = @"
 #!/usr/bin/env bash
 set -euo pipefail
 herdr_exe='/mnt/c/Users/Lenovo/AppData/Local/Programs/Herdr/bin/herdr.exe'
-initializer='C:\Users\Lenovo\.codex\skills\herdr\scripts\Initialize-HerdrProject.ps1'
-resumer='C:\Users\Lenovo\.codex\skills\herdr\scripts\Resume-HerdrWorkflows.ps1'
+initializer='$initializer'
+resumer='$resumer'
 if [ "`${1:-}" = "init" ]; then
   shift
   if [ "`${1:-}" = "--help" ] || [ "`${1:-}" = "-h" ]; then

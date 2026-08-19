@@ -10,43 +10,63 @@ param(
   [ValidateSet('task','verification','research')][string]$Profile,
   [switch]$DeferActivation,
   [string]$ProjectRoot = (Get-Location).Path,
-  [ValidateSet('right','down')][string]$Direction = 'right'
+  [ValidateSet('right','down')][string]$Direction = 'right',
+  [string]$SessionName
 )
 $ErrorActionPreference = 'Stop'
 function Resolve-OpenCodeModel([string]$Requested) {
-  $models = @((& opencode models 2>$null) -replace "`e\[[0-9;]*m", '' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-  if (-not $models.Count) { throw "Unable to obtain models from 'opencode models'." }
   $aliases = @{ 'zen'='opencode/deepseek-v4-flash-free'; 'zen-free'='opencode/deepseek-v4-flash-free'; 'deepseek-v4-flash-free'='opencode/deepseek-v4-flash-free'; 'go'='opencode-go/deepseek-v4-flash'; 'go-flash'='opencode-go/deepseek-v4-flash'; 'deepseek-v4-flash'='opencode-go/deepseek-v4-flash' }
-  $key = $Requested.Trim().ToLowerInvariant(); if ($aliases.ContainsKey($key)) { $key = $aliases[$key] }
+  $key = $Requested.Trim().ToLowerInvariant()
+  if ($aliases.ContainsKey($key)) { return $aliases[$key] }
+  if ($key -match '^[a-z0-9_-]+/[a-z0-9._-]+$') { return $Requested.Trim() }
+  $models = @()
+  try {
+    $models = @((& opencode models 2>$null) -replace "`e\[[0-9;]*m", '' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  } catch { }
+  if (-not $models.Count) { return $Requested.Trim() }
   $match = @($models | Where-Object { $_.Equals($key,[System.StringComparison]::OrdinalIgnoreCase) })
   if ($match.Count -eq 1) { return $match[0] }
-  $normal = $key -replace '[^a-z0-9]',''; $match = @($models | Where-Object { (($_ -replace '[^a-z0-9]','').ToLowerInvariant()).Contains($normal) })
+  $normal = $key -replace '[^a-z0-9]',''
+  $match = @($models | Where-Object { (($_ -replace '[^a-z0-9]','').ToLowerInvariant()).Contains($normal) })
   if ($match.Count -eq 1) { return $match[0] }
   if ($match.Count -gt 1) { throw "Ambiguous OpenCode model '$Requested'. Candidates: $($match -join ', ')" }
-  throw "OpenCode model '$Requested' was not found."
+  return $Requested.Trim()
+}
+function Ensure-HerdrSessionRunning([string]$SessionName) {
+  if (-not $SessionName) { return }
+  $status = & herdr --session $SessionName status server 2>&1
+  if ($LASTEXITCODE -ne 0 -or ($status -match 'not running')) {
+    Start-Process -FilePath herdr -ArgumentList @('--session', $SessionName, 'server') -WindowStyle Hidden | Out-Null
+    Start-Sleep -Milliseconds 1000
+    try { & herdr --session $SessionName workspace create 2>$null | Out-Null } catch { }
+  }
 }
 function Invoke-HerdrJson([string[]]$Arguments) {
-  $prefix = if($script:HerdrSession){ @('--session',$script:HerdrSession) } else { @() }
-  $raw = & herdr @prefix @Arguments 2>&1
+  if (-not $script:HerdrSession) { throw "Herdr session name is not configured. Direct operations must be isolated to a named session." }
+  Ensure-HerdrSessionRunning $script:HerdrSession
+  $raw = & herdr --session $script:HerdrSession @Arguments 2>&1
   $text = $raw -join "`n"
   try { return @{ exit=$LASTEXITCODE; json=($text | ConvertFrom-Json); text=$text } }
   catch { throw "Herdr returned non-JSON output: $text" }
 }
 function Start-AgentWhenPaneReady([string]$Pane,[string[]]$NativeArgs) {
-  $deadline = (Get-Date).AddSeconds(20)
+  $deadline = (Get-Date).AddSeconds(45)
   do {
     $command = @('agent','start',$Name,'--kind',$Kind,'--pane',$Pane,'--timeout','60000')
     if ($NativeArgs.Count) { $command += '--'; $command += $NativeArgs }
     $attempt = Invoke-HerdrJson $command
     if ($attempt.exit -eq 0 -and $attempt.json.result.agent.interactive_ready -and $attempt.json.result.agent.agent -eq $Kind -and @('blocked','error') -notcontains [string]$attempt.json.result.agent.agent_status) { return $attempt.json.result.agent }
-    if ([string]$attempt.json.error.code -eq 'agent_pane_busy') { Start-Sleep -Milliseconds 750; continue }
+    if ([string]$attempt.json.error.code -in @('agent_pane_busy','agent_pane_not_ready','pane_busy','pane_not_ready','shell_not_ready') -or $attempt.exit -ne 0) {
+      if ((Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 750; continue }
+    }
     throw "Herdr agent start failed: $($attempt.text)"
   } while ((Get-Date) -lt $deadline)
-  throw "New pane $Pane did not become an available shell within 20 seconds."
-}if ($env:HERDR_ENV -ne '1') { throw 'HERDR_ENV is not 1. Run this from a Herdr-managed pane.' }
+  throw "New pane $Pane did not become an available shell within 45 seconds."
+}
+if ($env:HERDR_ENV -ne '1') { throw 'HERDR_ENV is not 1. Run this from a Herdr-managed pane.' }
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $profileNativeArgs = @()
-$script:HerdrSession = $null
+$script:HerdrSession = if($SessionName){ $SessionName } else { $null }
 $gitProfile = $null
 $skillManifest = $null
 if ($Profile) {
@@ -54,8 +74,9 @@ if ($Profile) {
   $profilePath = Join-Path $project 'herdr\dispatch-profile.json'
   if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw "Herdr dispatch profile not found: $profilePath. Run 'herdr init' from the project root first." }
   try { $dispatchProfile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json } catch { throw "Invalid Herdr dispatch profile: $profilePath" }
-  $script:HerdrSession = [string]$dispatchProfile.herdr_session.name
-  if ([string]::IsNullOrWhiteSpace($script:HerdrSession)) { throw "Herdr profile is missing herdr_session.name: $profilePath" }
+  if (-not $script:HerdrSession) { $script:HerdrSession = [string]$dispatchProfile.herdr_session.name }
+  if ([string]::IsNullOrWhiteSpace($script:HerdrSession)) { throw "Herdr profile is missing herdr_session.name: $profilePath. Session must be strictly specified." }
+  Ensure-HerdrSessionRunning $script:HerdrSession
   $gitProfile = $dispatchProfile.git
   $skillManifest = $dispatchProfile.mattpocock_skills
   $entry = switch ($Profile) { 'task' { $dispatchProfile.task_agent }; 'verification' { $dispatchProfile.verification_agent }; 'research' { $dispatchProfile.research_agent } }
@@ -83,20 +104,26 @@ if ($Access -eq 'full' -and $profileNativeArgs.Count) {
 if ($Kind -eq 'opencode' -and $OpenCodeModel) { $OpenCodeModel=Resolve-OpenCodeModel $OpenCodeModel; $nativeArgs+=@('-m',$OpenCodeModel) }
 $date=Get-Date -Format 'yyyy-MM-dd';$stamp=Get-Date -Format 'HHmmss';$handoff=Join-Path $project "herdr\$Category\$date\$stamp--$Name--$Slug";New-Item -ItemType Directory -Force -Path $handoff|Out-Null
 $resultPath=Join-Path $handoff 'result.md';$outcomePath=Join-Path $handoff 'outcome.json';$briefPath=Join-Path $handoff 'brief.md';$statusPath=Join-Path $handoff 'status.json';$progressPath=Join-Path $handoff 'progress.json';$pane=$null;$agent=$null
-$workflowReference = 'C:\Users\Lenovo\.codex\skills\herdr\references\workflow-protocol.md'
+$workflowReference = Join-Path $PSScriptRoot '..\references\workflow-protocol.md'
+if (Test-Path -LiteralPath $workflowReference) {
+  $workflowReference = (Resolve-Path -LiteralPath $workflowReference).Path
+} else {
+  $workflowReference = 'references/workflow-protocol.md'
+}
 $skillPaths = if($skillManifest){ @($skillManifest.psobject.Properties | Where-Object {$_.Value.available} | ForEach-Object { "$($_.Name): $($_.Value.path)" }) -join '; ' }else{'not recorded'}
 $gitContract = if($gitProfile -and $gitProfile.repository -and -not $gitProfile.has_commit){'Git was initialized but has no baseline commit. For task/bugfix, do not edit or claim candidate: write outcome state blocked and explain that the user must review and create the initial baseline commit first.'}else{'Git baseline status permits normal task/bugfix execution; preserve unrelated changes.'}
+$ghGuideline = "GitHub Operations: For any GitHub-related operations (creating PRs, inspecting PRs/issues, checking GitHub Actions/CI runs, or viewing diffs), always use the GitHub CLI (`gh`) tool (e.g. `gh pr create`, `gh pr checks`, `gh issue view`, `gh run list`) rather than manual browser steps or unauthenticated git commands."
 $roleContract = switch ($Profile) {
   'research' { @"
-You are the research agent. Use the official mattpocock `/research` skill. Follow $($workflowReference): use primary evidence, keep a decision-critical claim ledger with exact source evidence and access dates, state uncertainty and contradictory evidence, and remain read-only. A verifier audits evidence; do not claim unverified conclusions.
+You are the research agent. Use the official mattpocock `/research` skill. Follow $($workflowReference): use primary evidence, keep a decision-critical claim ledger with exact source evidence and access dates, state uncertainty and contradictory evidence, and remain read-only. A verifier audits evidence; do not claim unverified conclusions. $ghGuideline
 "@ }
   'verification' { @"
-You are the verification and integration agent. Use the official mattpocock `/code-review` skill with the fixed comparison `base_sha...candidate_sha` supplied by the candidate outcome. It performs standards and spec review; it does not replace independent acceptance testing. Read the execution candidate's result/branch/worktree supplied in the task prompt. Evaluate outcome, regression, spec/scope, and standards/integration independently. Report only reproducible P0/P1 blockers (maximum five) with acceptance rule and command/file evidence. Do not turn style suggestions into blockers. If all gates pass, confirm the target tree is clean and at the expected base, merge safely, re-run the applicable checks after merge, and report `merged` with merge SHA. Do not push: the workflow monitor owns the configured post-merge push. If any gate or safe merge fails, report `fix_required` or `blocked`; never force reset, clean, stash, or overwrite other work.
+You are the verification and integration agent. Use the official mattpocock `/code-review` skill with the fixed comparison `base_sha...candidate_sha` supplied by the candidate outcome. It performs standards and spec review; it does not replace independent acceptance testing. Read the execution candidate's result/branch/worktree supplied in the task prompt. Evaluate outcome, regression, spec/scope, and standards/integration independently. Report only reproducible P0/P1 blockers (maximum five) with acceptance rule and command/file evidence. Do not turn style suggestions into blockers. If all gates pass, confirm the target tree is clean and at the expected base, merge safely, re-run the applicable checks after merge, and report `merged` with merge SHA. Do not push: the workflow monitor owns the configured post-merge push. If any gate or safe merge fails, report `fix_required` or `blocked`; never force reset, clean, stash, or overwrite other work. $ghGuideline
 "@ }
   default { if ($Category -eq 'bugfix') { @"
-You are the bugfix execution agent. Use official mattpocock `/diagnosing-bugs` to establish the loop, then `/implement` for the repair and `/tdd` at an agreed regression seam. $gitContract Before editing, build and run a narrow, red-capable reproduction. Do not ship a guess-based patch when no such loop exists. Make the worktree decision from Git state before editing. Return `candidate` only with outcome fields worktree_decision, worktree_path, branch, base_sha, candidate_sha, changed files, commands and results; do not merge.
+You are the bugfix execution agent. Use official mattpocock `/diagnosing-bugs` to establish the loop, then `/implement` for the repair and `/tdd` at an agreed regression seam. $gitContract Before editing, build and run a narrow, red-capable reproduction. Do not ship a guess-based patch when no such loop exists. Make the worktree decision from Git state before editing. Return `candidate` only with outcome fields worktree_decision, worktree_path, branch, base_sha, candidate_sha, changed files, commands and results; do not merge. $ghGuideline
 "@ } else { @"
-You are the task execution agent. Use official mattpocock `/implement` for this backend task, use `/tdd` at a confirmed seam, and run `/code-review` against the candidate before handoff. $gitContract Before editing, define observable acceptance checks and make the mandatory worktree decision. Use an isolated worktree for dirty shared trees, concurrent work, or overlap risk. Implement the smallest complete change, run focused and relevant full validation, and commit the candidate branch. Return `candidate` only with outcome fields worktree_decision (`isolated` or `in_place`), worktree_path, branch, base_sha, candidate_sha, changed_files, acceptance checks and command results; do not merge.
+You are the task execution agent. Use official mattpocock `/implement` for this backend task, use `/tdd` at a confirmed seam, and run `/code-review` against the candidate before handoff. $gitContract Before editing, define observable acceptance checks and make the mandatory worktree decision. Use an isolated worktree for dirty shared trees, concurrent work, or overlap risk. Implement the smallest complete change, run focused and relevant full validation, and commit the candidate branch. Return `candidate` only with outcome fields worktree_decision (`isolated` or `in_place`), worktree_path, branch, base_sha, candidate_sha, changed_files, acceptance checks and command results; do not merge. $ghGuideline
 "@ } }
 }
 try {
@@ -106,6 +133,7 @@ try {
 - Agent: $Name
 - Kind: $Kind
 - Access: $Access
+- GitHub CLI Standard: Use `gh` CLI for all GitHub actions (issues, PRs, CI runs).
 
 ## Task
 $Prompt
@@ -129,10 +157,36 @@ Only after completing your role's required evidence, write full Markdown evidenc
 `herdr notification show "Herdr: $Name 已完成" --body "$resultPath" --sound done`
 Do not report completion only in the TUI.
 "@ | Set-Content -LiteralPath $briefPath -Encoding utf8
-  $split=(Invoke-HerdrJson @('pane','split','--current','--direction',$Direction,'--cwd',$project,'--no-focus')).json
-  $pane=[string]$split.result.pane.pane_id;if(-not $pane){throw 'Herdr did not return a pane ID.'}
+  $pane = $null
+  try {
+    $paneList = (Invoke-HerdrJson @('pane','list')).json
+    $paneCount = if ($paneList.result.panes) { $paneList.result.panes.Count } else { 0 }
+    if ($paneCount -ge 4) {
+      $tabResult = (Invoke-HerdrJson @('tab','create','--cwd',$project)).json
+      $pane = [string]$tabResult.result.root_pane.pane_id
+    } else {
+      $splitResult = (Invoke-HerdrJson @('pane','split','--current','--direction',$Direction,'--cwd',$project,'--no-focus')).json
+      $pane = [string]$splitResult.result.pane.pane_id
+    }
+  } catch {
+    $paneList = (Invoke-HerdrJson @('pane','list')).json
+    $firstPane = if ($paneList.result.panes.Count -gt 0) { [string]$paneList.result.panes[0].pane_id } else { $null }
+    if ($firstPane) {
+      try {
+        $splitResult = (Invoke-HerdrJson @('pane','split','--pane',$firstPane,'--direction',$Direction,'--cwd',$project,'--no-focus')).json
+        $pane = [string]$splitResult.result.pane.pane_id
+      } catch {
+        $tabResult = (Invoke-HerdrJson @('tab','create','--cwd',$project)).json
+        $pane = [string]$tabResult.result.root_pane.pane_id
+      }
+    } else {
+      $tabResult = (Invoke-HerdrJson @('workspace','create')).json
+      $pane = [string]$tabResult.result.root_pane.pane_id
+    }
+  }
+  if (-not $pane) { throw 'Herdr did not return a pane ID.' }
   # Wait for the newly split PowerShell pane to reach its interactive prompt before agent start.
-  Start-Sleep -Seconds 7
+  Start-Sleep -Seconds 5
   $agent=Start-AgentWhenPaneReady $pane $nativeArgs
   if(-not $agent -or $agent.agent -ne $Kind -or -not $agent.interactive_ready){throw 'Herdr did not return a confirmed interactive agent.'}
   $status=[ordered]@{name=$Name;kind=$Kind;access=$Access;model=$OpenCodeModel;profile=$Profile;deferred=[bool]$DeferActivation;pane_id=$pane;started_at=(Get-Date -Format o);brief_path=$briefPath;result_path=$resultPath;outcome_path=$outcomePath;progress_path=$progressPath;start_result=$agent}
@@ -141,8 +195,12 @@ Do not report completion only in the TUI.
   $watchPid=$null
   if(-not $DeferActivation){
     $message="Read $briefPath. You are $Name. Follow the workflow role contract exactly; reopen the brief at every phase boundary. Before completion write $resultPath and $outcomePath, then send the exact Herdr completion notification. A TUI reply alone is invalid. Final reply: summary plus result path only."
-    if($Kind -eq 'opencode'){Start-Sleep -Seconds 10;Invoke-HerdrJson @('pane','send-text',$pane,$message)|Out-Null;Invoke-HerdrJson @('pane','send-keys',$pane,'enter')|Out-Null}else{Invoke-HerdrJson @('agent','prompt',$Name,$message)|Out-Null}
-    $watcher=Join-Path $PSScriptRoot 'Watch-HerdrHandoff.ps1';$watchArgs="-NoProfile -ExecutionPolicy Bypass -File `"$watcher`" -AgentName `"$Name`" -StatusPath `"$statusPath`" -OutcomePath `"$outcomePath`"";$watch=Start-Process -FilePath powershell.exe -ArgumentList $watchArgs -WindowStyle Hidden -PassThru;$watchPid=$watch.Id
+    if($Kind -eq 'opencode'){Start-Sleep -Seconds 3;Invoke-HerdrJson @('pane','send-text',$pane,$message)|Out-Null;Invoke-HerdrJson @('pane','send-keys',$pane,'enter')|Out-Null}else{Invoke-HerdrJson @('agent','prompt',$Name,$message)|Out-Null}
+    $watcher=Join-Path $PSScriptRoot 'Watch-HerdrHandoff.ps1'
+    $psHost = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+    $watchArgs="-NoProfile -ExecutionPolicy Bypass -File `"$watcher`" -AgentName `"$Name`" -StatusPath `"$statusPath`" -OutcomePath `"$outcomePath`""
+    $watch=Start-Process -FilePath $psHost -ArgumentList $watchArgs -WindowStyle Hidden -PassThru
+    $watchPid=$watch.Id
   }
   [pscustomobject]@{name=$Name;pane_id=$pane;handoff=$handoff;brief=$briefPath;result=$resultPath;outcome=$outcomePath;progress=$progressPath;status=$statusPath;watcher_pid=$watchPid;deferred=[bool]$DeferActivation}|ConvertTo-Json -Depth 4
 } catch {

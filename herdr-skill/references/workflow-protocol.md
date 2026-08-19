@@ -44,7 +44,15 @@ Verification gates:
 
 On pass, verifier confirms target tree is clean and at expected base, merges safely, runs applicable post-merge verification, records merge SHA, and emits `merged`. Never force reset, clean, stash, or overwrite unrelated changes.
 
-`herdr init` runs `git init` by default only when the project is not already a Git repository. It never creates the first project-wide commit, configures a remote, or publishes code. It adds `herdr/` and `.worktrees/` to `.gitignore` for a newly initialized repository. When init records `push_policy: after_merge` for an existing configured remote, the monitor runs the actual `git push <remote> <target-branch>` after a successful local merge. A push failure preserves the merge, records `push_status: failed`, and sends an attention notification; it must never undo the merge.
+`herdr init` runs `git init` by default only when the project is not already a Git repository. It never creates the first project-wide commit, configures a remote, or publishes code without user direction. It adds `herdr/` and `.worktrees/` to `.gitignore` for a newly initialized repository.
+
+### GitHub Integration & Submission with GitHub CLI (`gh`)
+
+All GitHub interactions (repository lookup, authentication verification, PR creation, CI checks, issue management, and remote publishing) MUST use the official GitHub CLI (`gh`) instead of browser links or raw unauthenticated commands:
+- **`push_policy: after_merge`**: The workflow monitor runs `git push <remote> <target-branch>` after a successful local merge, verified through `gh auth status` when target is a GitHub remote.
+- **`push_policy: create_pr`**: The workflow monitor uses `gh pr create --repo <remote-url> --base <target-branch> --title <title> --body <body>` to create an authenticated Pull Request on GitHub.
+- **CI / Action Inspection**: Verification agents use `gh pr checks` and `gh run list` / `gh run view` to inspect CI pipelines.
+- A push/PR failure preserves the merge, records `push_status: failed`, and sends an attention notification; it must never undo the merge.
 
 ## Bugfix
 

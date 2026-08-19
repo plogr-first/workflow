@@ -46,6 +46,7 @@ The workflow launcher starts execution and deferred verification Agents, then th
 - Verifier reports only reproducible P0/P1 blockers, maximum five. Third unresolved verification, unsafe merge, or unreproducible bug is `blocked`.
 - Task/bugfix succeeds only at `merged`: all protocol gates pass, merge is safe, and post-merge checks pass. Research succeeds only at `passed`.
 - API-affecting task/bugfix verification must include the API-contract gate.
+- **GitHub Operations**: All GitHub interactions (issues, PR creation, review, CI inspection, pushes) must use the GitHub CLI (`gh`) rather than manual browser steps or raw git remote pushes.
 
 Read [workflow protocol](references/workflow-protocol.md) before writing a brief or interpreting an outcome. On explicit script failure, read [troubleshooting](references/troubleshooting.md). Read [setup/runtime](references/setup-runtime.md) only for `herdr init`, wrappers, profiles, or model selection.
 

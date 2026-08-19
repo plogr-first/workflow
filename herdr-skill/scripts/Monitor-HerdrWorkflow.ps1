@@ -6,6 +6,7 @@ param(
   [switch]$Once
 )
 $ErrorActionPreference = 'Stop'
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 $workflowPath = (Resolve-Path -LiteralPath $WorkflowPath).Path
 $workflowDir = Split-Path -Parent $workflowPath
 $eventsPath = Join-Path $workflowDir 'events.jsonl'
@@ -44,11 +45,16 @@ function Test-OutcomeEvidence($Workflow, [string]$Role, $Outcome) {
     if(@('isolated','in_place') -notcontains [string]$Outcome.worktree_decision){return 'invalid worktree_decision'}
     $worktree=[string]$Outcome.worktree_path; $project=[string]$Workflow.project_root
     if(-not (Test-Path -LiteralPath $worktree -PathType Container)){return 'candidate worktree_path does not exist'}
-    try {$worktree=(Resolve-Path -LiteralPath $worktree).Path; if($project){$project=(Resolve-Path -LiteralPath $project).Path}}catch{return 'candidate worktree_path cannot be resolved'}
-    if($Outcome.worktree_decision -eq 'in_place' -and $project -and $worktree -ne $project){return 'in_place worktree_path is not project_root'}
-    if($Outcome.worktree_decision -eq 'isolated' -and $project){$listed=@(& git -C $project worktree list --porcelain 2>$null | Where-Object {$_ -eq "worktree $worktree"});if(-not $listed.Count){return 'isolated worktree_path is not a registered git worktree'}}
-    & git -C $worktree cat-file -e "$($Outcome.candidate_sha)^{commit}" 2>$null; if($LASTEXITCODE -ne 0){return 'candidate_sha is not a commit in worktree'}
-    & git -C $worktree merge-base --is-ancestor $Outcome.base_sha $Outcome.candidate_sha 2>$null; if($LASTEXITCODE -ne 0){return 'base_sha is not an ancestor of candidate_sha'}
+    $normWorktree = try { [System.IO.Path]::GetFullPath($worktree).TrimEnd('\').TrimEnd('/') } catch { ($worktree -replace '/', '\').TrimEnd('\') }
+    $normProject = if($project){ try { [System.IO.Path]::GetFullPath($project).TrimEnd('\').TrimEnd('/') } catch { ($project -replace '/', '\').TrimEnd('\') } } else { $null }
+    if($Outcome.worktree_decision -eq 'in_place' -and $normProject -and -not $normWorktree.Equals($normProject, [System.StringComparison]::OrdinalIgnoreCase)){return 'in_place worktree_path is not project_root'}
+    if($Outcome.worktree_decision -eq 'isolated'){
+      if($normProject -and $normWorktree.Equals($normProject, [System.StringComparison]::OrdinalIgnoreCase)){return 'isolated worktree_path cannot be project_root'}
+      $isInside = (& git -c core.quotepath=false -C $normWorktree rev-parse --is-inside-work-tree 2>$null)
+      if ($LASTEXITCODE -ne 0 -or [string]$isInside -ne 'true') { return 'isolated worktree_path is not a registered git worktree' }
+    }
+    & git -c core.quotepath=false -C $normWorktree cat-file -e "$($Outcome.candidate_sha)^{commit}" 2>$null; if($LASTEXITCODE -ne 0){return 'candidate_sha is not a commit in worktree'}
+    & git -c core.quotepath=false -C $normWorktree merge-base --is-ancestor $Outcome.base_sha $Outcome.candidate_sha 2>$null; if($LASTEXITCODE -ne 0){return 'base_sha is not an ancestor of candidate_sha'}
   }
   if ($Role -eq 'verification' -and @('passed','merged','fix_required') -contains [string]$Outcome.state) {
     $verification = Join-Path ([string]$entry.handoff) 'verification.md'
@@ -57,21 +63,69 @@ function Test-OutcomeEvidence($Workflow, [string]$Role, $Outcome) {
   return $null
 }
 function Push-MergedWorkflow($Workflow) {
-  if ([string]$Workflow.git.push_policy -ne 'after_merge') { return 'not_configured' }
+  $policy = [string]$Workflow.git.push_policy
+  if (@('after_merge','create_pr') -notcontains $policy) { return 'not_configured' }
   $project=[string]$Workflow.project_root; $remote=[string]$Workflow.git.push_remote; $branch=[string]$Workflow.git.target_branch
   if([string]::IsNullOrWhiteSpace($project) -or [string]::IsNullOrWhiteSpace($remote) -or [string]::IsNullOrWhiteSpace($branch)){throw 'push policy is incomplete in workflow.json'}
-  $output=& git -C $project push $remote $branch 2>&1
+  
+  $hasGh = [bool](Get-Command -Name 'gh' -CommandType Application -ErrorAction SilentlyContinue)
+  $remoteUrl = (& git -c core.quotepath=false -C $project remote get-url $remote 2>$null)
+  $isGitHub = ($Workflow.git.github -and $Workflow.git.github.is_github) -or ($remoteUrl -match 'github\.com')
+
+  if ($policy -eq 'create_pr') {
+    if (-not $hasGh) { throw "Push policy 'create_pr' requires GitHub CLI ('gh') in PATH." }
+    $title = "[$([string]$Workflow.mode)] $([string]$Workflow.slug)"
+    $body = if ($Workflow.verifier -and $Workflow.verifier.result -and (Test-Path -LiteralPath ([string]$Workflow.verifier.result))) {
+      Get-Content -LiteralPath ([string]$Workflow.verifier.result) -Raw
+    } else { "Herdr workflow $([string]$Workflow.workflow_id) verified changes." }
+    
+    # Push branch first if not pushed
+    & git -c core.quotepath=false -C $project push $remote $branch 2>&1 | Out-Null
+    $prOutput = & gh pr create --repo $remoteUrl --base $branch --title $title --body $body 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "gh pr create failed: $($prOutput -join ' ')" }
+    return 'pr_created'
+  }
+
+  if ($isGitHub -and $hasGh) {
+    & gh auth status 2>$null
+  }
+  $output=& git -c core.quotepath=false -C $project push $remote $branch 2>&1
   if($LASTEXITCODE -ne 0){throw "git push $remote $branch failed: $($output -join ' ')"}
   return 'pushed'
 }
 function OutcomeHash([string]$Path) { if(Test-Path $Path){ return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }; return $null }
-function Prompt-Agent([string]$Name, [string]$Message) {
+function Prompt-Agent([string]$Name, [string]$Message, $Entry = $null) {
   $prefix = if($script:Session){ @('--session',$script:Session) } else { @() }
-  & herdr @prefix agent prompt $Name $Message | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "Unable to prompt Agent '$Name' in Herdr session '$script:Session'." }
+  $pane = if ($Entry) { [string]$Entry.pane_id } else { $null }
+  $statusObj = if ($Entry -and $Entry.status -and (Test-Path -LiteralPath ([string]$Entry.status))) {
+    try { Get-Content -LiteralPath ([string]$Entry.status) -Raw | ConvertFrom-Json } catch { $null }
+  } else { $null }
+  $kind = if ($statusObj -and $statusObj.kind) { [string]$statusObj.kind } else { 'opencode' }
+  if ($kind -eq 'opencode' -and $pane) {
+    & herdr @prefix pane send-text $pane $Message | Out-Null
+    & herdr @prefix pane send-keys $pane 'enter' | Out-Null
+  } else {
+    $old=$ErrorActionPreference; $ErrorActionPreference='Continue'
+    & herdr @prefix agent prompt $Name $Message 2>$null | Out-Null
+    $code=$LASTEXITCODE; $ErrorActionPreference=$old
+    if ($code -ne 0 -and $pane) {
+      & herdr @prefix pane send-text $pane $Message | Out-Null
+      & herdr @prefix pane send-keys $pane 'enter' | Out-Null
+    } elseif ($code -ne 0) {
+      throw "Unable to prompt Agent '$Name' in Herdr session '$script:Session'."
+    }
+  }
 }
 function Agent-Live([string]$Name) {
-  try { $old=$ErrorActionPreference; $ErrorActionPreference='Continue'; & herdr @('--session',$script:Session) agent get $Name 2>$null | Out-Null; $code=$LASTEXITCODE; $ErrorActionPreference=$old; return ($code -eq 0) } catch { $ErrorActionPreference=$old; return $false }
+  try {
+    $prefix = if($script:Session){ @('--session',$script:Session) } else { @() }
+    $old=$ErrorActionPreference; $ErrorActionPreference='Continue'
+    & herdr @prefix agent get $Name 2>$null | Out-Null
+    $code=$LASTEXITCODE; $ErrorActionPreference=$old
+    return ($code -eq 0)
+  } catch {
+    $ErrorActionPreference=$old; return $false
+  }
 }
 function Acquire-Lease {
   if (Test-Path $lockPath) {
@@ -97,16 +151,26 @@ try {
     $taskHash=OutcomeHash $taskOutcomePath; $verHash=OutcomeHash $verOutcomePath
     if ($workflow.next_role -eq 'task' -and -not (Agent-Live ([string]$workflow.task.name))) { $missingTaskTicks++ } else { $missingTaskTicks=0 }
     if ($workflow.next_role -eq 'verification' -and -not (Agent-Live ([string]$workflow.verifier.name))) { $missingVerifierTicks++ } else { $missingVerifierTicks=0 }
-    if ($missingTaskTicks -ge 3 -or $missingVerifierTicks -ge 3) {
-      $missingRole=if($missingTaskTicks -ge 3){'task'}else{'verification'}; Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='agent_unavailable';role=$missingRole}; Notify "Herdr: $missingRole Agent 不可用，工作流已阻塞" $workflowPath 'request'; break
+    if ($missingTaskTicks -ge 10 -or $missingVerifierTicks -ge 10) {
+      $missingRole=if($missingTaskTicks -ge 10){'task'}else{'verification'}; Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='agent_unavailable';role=$missingRole}; Notify "Herdr: $missingRole Agent 不可用，工作流已阻塞" $workflowPath 'request'; break
     }
     if ($taskOutcome -and $taskOutcome.state -eq 'blocked') {
       Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='task_agent_blocked'}; Notify "Herdr: $($workflow.task.name) 已阻塞" ([string]$workflow.task.result) 'request'; break
     } elseif ($taskOutcome -and $taskOutcome.state -eq 'candidate' -and (Test-OutcomeEvidence $workflow 'task' $taskOutcome)) {
-      $reason=Test-OutcomeEvidence $workflow 'task' $taskOutcome; Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='invalid_task_handoff';detail=$reason}; Notify "Herdr: 任务交接不完整：$reason" ([string]$workflow.task.result) 'request'; break
+      $evidenceError = Test-OutcomeEvidence $workflow 'task' $taskOutcome
+      if ($evidenceError) {
+        Start-Sleep -Milliseconds 750
+        $evidenceError = Test-OutcomeEvidence $workflow 'task' $taskOutcome
+      }
+      if ($evidenceError) {
+        Save-State $workflow 'blocked' ''
+        Append-Event 'workflow_blocked' @{reason='invalid_task_handoff';detail=$evidenceError}
+        Notify 'Herdr: 任务候选证据无效，工作流已阻塞' ([string]$workflow.task.result) 'blocked'
+        break
+      }
     } elseif ($workflow.next_role -eq 'verification' -and $taskOutcome -and $taskOutcome.state -eq 'candidate' -and $workflow.last_processed.task_outcome_hash -ne $taskHash) {
       $msg="Wake-up: read $($workflow.task.result), $taskOutcomePath and the configured official mattpocock /code-review skill, fixed at the candidate base SHA. Verify API docs/OpenAPI, backend routes/validation, generated client/types, and actual endpoint behavior when applicable. Write $($workflow.verifier.result), verification.md, and $verOutcomePath. Use merged only after safe merge and post-merge checks; use fix_required only for reproducible P0/P1 blockers."
-      Prompt-Agent ([string]$workflow.verifier.name) $msg; $workflow.last_processed.task_outcome_hash=$taskHash; Save-State $workflow 'verifying' 'verification'; Append-Event 'verification_woken' @{agent=$workflow.verifier.name}; Notify "Herdr: $($workflow.verifier.name) 已唤醒验收" ([string]$workflow.verifier.result)
+      Prompt-Agent ([string]$workflow.verifier.name) $msg $workflow.verifier; $workflow.last_processed.task_outcome_hash=$taskHash; Save-State $workflow 'verifying' 'verification'; Append-Event 'verification_woken' @{agent=$workflow.verifier.name}; Notify "Herdr: $($workflow.verifier.name) 已唤醒验收" ([string]$workflow.verifier.result)
     } elseif ($workflow.next_role -eq 'task' -and $taskOutcome -and $taskOutcome.state -eq 'candidate' -and @('executing','repairing') -contains [string]$workflow.state) {
       Save-State $workflow 'candidate' 'verification'
     } elseif ($verOutcome -and (Test-OutcomeEvidence $workflow 'verification' $verOutcome)) {
@@ -121,7 +185,7 @@ try {
       if ($verOutcome.state -eq 'fix_required' -and ([int]$workflow.repair_round -lt [int]$workflow.max_repair_rounds)) {
         $workflow.repair_round=[int]$workflow.repair_round+1; Save-State $workflow 'repairing' 'task'; Append-Event 'fix_required' @{repair_round=$workflow.repair_round}
         $msg="Wake-up for repair round $($workflow.repair_round)/$($workflow.max_repair_rounds). Read $($workflow.verifier.result), $verOutcomePath and the existing worktree. Use mattpocock /diagnosing-bugs then /implement for bugfix, or /implement for task; use /tdd at a confirmed seam, fix only reproducible P0/P1 blockers, re-run affected checks, update $($workflow.task.result), and write $taskOutcomePath with state candidate. Do not merge."
-        Prompt-Agent ([string]$workflow.task.name) $msg; Notify "Herdr: $($workflow.task.name) 已唤醒返工" ([string]$workflow.task.result) 'request'
+        Prompt-Agent ([string]$workflow.task.name) $msg $workflow.task; Notify "Herdr: $($workflow.task.name) 已唤醒返工" ([string]$workflow.task.result) 'request'
       } else { Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='repair_limit_or_invalid_outcome'}; Notify 'Herdr: 验收未通过，已停止循环' ([string]$workflow.verifier.result) 'request'; break }
     }
     if ($Once) { break }

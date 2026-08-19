@@ -39,12 +39,12 @@ if (-not $VerifierName) { $VerifierName = New-AgentName 'verify' }
 if ($TaskName -eq $VerifierName) { throw 'Task and verification Agent names must differ.' }
 $launcher = Join-Path $PSScriptRoot 'Start-HerdrAgent.ps1'
 $taskProfile = if ($Mode -eq 'research') { 'research' } else { 'task' }
-$task = & $launcher -Profile $taskProfile -Name $TaskName -Category $Mode -Slug $Slug -Prompt $Prompt -ProjectRoot $project | ConvertFrom-Json
+$task = & $launcher -Profile $taskProfile -Name $TaskName -Category $Mode -Slug $Slug -Prompt $Prompt -ProjectRoot $project -SessionName $session | ConvertFrom-Json
 if (-not $task.name -or -not $task.outcome) { throw 'Task Agent dispatch did not return a durable handoff.' }
 $task | Add-Member -Force -NotePropertyName original_agent_name -NotePropertyValue ([string]$task.name)
 $task | Add-Member -Force -NotePropertyName active_agent_name -NotePropertyValue ([string]$task.name)
 $waitPrompt = "You are the deferred verification Agent for workflow $Mode/$Slug. Do not begin review and do not write result.md until the workflow monitor wakes you with the candidate handoff path. When awakened, use the configured official mattpocock /code-review skill and write result.md, verification.md, and outcome.json."
-$verifier = & $launcher -Profile verification -DeferActivation -Name $VerifierName -Category $Mode -Slug "$Slug-verify" -Prompt $waitPrompt -ProjectRoot $project | ConvertFrom-Json
+$verifier = & $launcher -Profile verification -DeferActivation -Name $VerifierName -Category $Mode -Slug "$Slug-verify" -Prompt $waitPrompt -ProjectRoot $project -SessionName $session -Direction down | ConvertFrom-Json
 if (-not $verifier.name -or -not $verifier.outcome) { throw 'Verification Agent dispatch did not return a durable handoff.' }
 $verifier | Add-Member -Force -NotePropertyName original_agent_name -NotePropertyValue ([string]$verifier.name)
 $verifier | Add-Member -Force -NotePropertyName active_agent_name -NotePropertyValue ([string]$verifier.name)
@@ -71,6 +71,7 @@ function Append-Event([string]$Event, [hashtable]$Fields = @{}) {
 Write-AtomicJson $workflow $workflowPath
 Append-Event 'workflow_created' @{ workflow_id = $workflow.workflow_id; session = $session; next_role = 'task' }
 $monitor = Join-Path $PSScriptRoot 'Monitor-HerdrWorkflow.ps1'
+$psHost = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
 $monitorArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -WorkflowPath `"$workflowPath`""
-$process = Start-Process -FilePath pwsh.exe -ArgumentList $monitorArgs -WindowStyle Hidden -PassThru
+$process = Start-Process -FilePath $psHost -ArgumentList $monitorArgs -WindowStyle Hidden -PassThru
 [pscustomobject]@{workflow=$workflowPath; monitor_pid=$process.Id; workflow_id=$workflow.workflow_id; session=$session; task=$task; verifier=$verifier} | ConvertTo-Json -Depth 12

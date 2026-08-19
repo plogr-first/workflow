@@ -57,8 +57,9 @@ foreach($wf in $items) {
   if(-not $path){continue}
   if($wf.next_role -in @('task','verification')){ Ensure-Agent $wf ([string]$wf.next_role) $path }
   $monitor=Join-Path $PSScriptRoot 'Monitor-HerdrWorkflow.ps1'
-  1..3 | ForEach-Object { & pwsh.exe -NoProfile -ExecutionPolicy Bypass -File $monitor -WorkflowPath $path -Once; Start-Sleep -Milliseconds 200 }
+  $psHost = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+  1..3 | ForEach-Object { & $psHost -NoProfile -ExecutionPolicy Bypass -File $monitor -WorkflowPath $path -Once; Start-Sleep -Milliseconds 200 }
   $latest=Get-Content $path -Raw|ConvertFrom-Json
-  if(@('merged','passed','blocked') -notcontains [string]$latest.state){ Start-Process pwsh.exe -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -WorkflowPath `"$path`"" | Out-Null }
+  if(@('merged','passed','blocked') -notcontains [string]$latest.state){ Start-Process $psHost -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -WorkflowPath `"$path`"" | Out-Null }
   Write-Output ([ordered]@{workflow_id=$latest.workflow_id;session=$session;state=$latest.state;next_role=$latest.next_role;workflow=$path}|ConvertTo-Json -Compress)
 }

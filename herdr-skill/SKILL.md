@@ -33,8 +33,8 @@ After a Herdr or computer restart, run `herdr resume` from the project root insi
 Resume reads persisted `workflow.json`, `events.jsonl`, handoffs, Git/worktree state, and the configured mattpocock skill manifest. It wakes the persisted `next_role` (`task` or `verification`), starts a replacement Agent when the recorded Agent is gone, and never guesses across sessions. It must not resume terminal `merged`, `passed`, or `blocked` workflows.
 
 - `research`: use the research profile; require primary evidence and read-only work.
-- `task`: use the task profile; require implementation, candidate commit, and acceptance checks.
-- `bugfix`: use the task profile; require a red-capable reproduction before a fix.
+- `task`: use the task profile; **must use subagent-driven development mode** (task agent acts as lead orchestrator, dispatching subagents for decomposed subtasks/modules before integration), require implementation, candidate commit, and acceptance checks.
+- `bugfix`: execute `C:\Users\Lenovo\.agents\skills\audit-suite` for read-only audit & triage first, then use `mattpocock/diagnosing-bugs` to establish a red-capable reproduction loop before implementing fixes via `implement`/`tdd`.
 
 ## Workflow contract
 

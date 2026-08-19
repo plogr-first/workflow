@@ -30,6 +30,8 @@ Verification: audit every decision-critical claim for source provenance, evidenc
 
 Use `Mode task`.
 
+**Subagent-Driven Development Mode (Mandatory)**: Task Execution Agents must operate as lead orchestrators using subagent-driven development. Rather than executing a monolithic implementation in a single context, the primary Task Agent decomposes complex requirements into discrete work packages (e.g. schema/API design, core domain logic, data adapter, integration tests) and delegates them to focused subagents. The primary Task Agent orchestrates subagent deliverables, enforces interface consistency, runs unified TDD, and prepares the candidate commit.
+
 Execution: define observable acceptance checks; inspect Git status/current branch/worktrees/concurrent edits; isolate in a worktree when shared tree is dirty, concurrent, or overlapping; implement the smallest complete change; run focused and relevant full checks; commit a `candidate`. Record worktree path, branch, base SHA, candidate SHA, changed files, and command results. Do not merge.
 
 Make the worktree decision from repository state; use Git worktrees directly when isolation is required. `worktree_decision` is mandatory: `isolated` requires the linked worktree path; `in_place` requires an explicit safety reason in `result.md`. An unborn Git repository has no safe baseline for candidate worktrees; write `blocked` rather than silently committing a project-wide baseline.
@@ -58,7 +60,10 @@ All GitHub interactions (repository lookup, authentication verification, PR crea
 
 Use `Mode bugfix`.
 
-Execution must first build and run a narrow, red-capable reproduction for the reported symptom. Minimise it, test falsifiable hypotheses one variable at a time, add a regression test at the correct seam where possible, fix root cause, rerun original reproduction, remove temporary instrumentation, commit `candidate`. If no red-capable loop exists, emit `blocked`; do not ship a guess-based patch.
+**Audit-First & Root-Cause Pipeline**:
+1. **Audit Phase**: The Agent MUST first execute the global `C:\Users\Lenovo\.agents\skills\audit-suite` skill for read-only static analysis, code/API alignment check, and symptom triage to generate an audit report (`.audit/AUDIT-REPORT-*.md` / `FIX-TASK`).
+2. **Diagnosis Phase**: Use `mattpocock/diagnosing-bugs` to build and run a narrow, red-capable reproduction for the reported symptom. Minimise it and test falsifiable hypotheses one variable at a time.
+3. **Fix & TDD Phase**: Use `mattpocock/implement` and `tdd` to apply the minimal fix at the root cause seam, rerun the original reproduction to confirm green, remove temporary instrumentation, and commit `candidate`. If no red-capable loop exists, emit `blocked`; do not ship a guess-based patch.
 
 Verification independently reruns original reproduction and regression check, confirms debug cleanup, then applies task gates 1–5 and merges only after pass.
 

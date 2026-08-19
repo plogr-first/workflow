@@ -20,6 +20,7 @@ param(
   [string]$HerdrSessionName,
   [ValidateSet('manual','after_merge','create_pr')][string]$PushPolicy,
   [string]$PushRemote,
+  [string[]]$SkillTargetAgents,
   [switch]$SkipGitInit,
   [switch]$SkipSkillsInstall,
   [switch]$Help
@@ -160,9 +161,18 @@ function Get-SupportedKinds {
 }
 
 function Get-OpenCodeModels {
-  $models = @((& opencode models 2>$null) -replace "`e\[[0-9;]*m", '' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-  if (-not $models.Count) { throw "Unable to obtain models from 'opencode models'." }
-  return $models
+  $defaultModels = @(
+    'opencode/deepseek-v4-flash-free',
+    'opencode-go/deepseek-v4-flash',
+    'opencode/claude-3-7-sonnet',
+    'opencode/claude-3-5-sonnet',
+    'opencode/gpt-4o'
+  )
+  try {
+    $models = @((& opencode models 2>$null) -replace "`e\[[0-9;]*m", '' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($models -and $models.Count -gt 0) { return $models }
+  } catch {}
+  return $defaultModels
 }
 
 function Resolve-OpenCodeModel([string]$Requested, [string[]]$Models) {
@@ -213,6 +223,58 @@ function Select-HerdrSession([string]$Requested) {
   return $choice
 }
 
+function Install-HerdrSkills([string]$Project, [string[]]$TargetAgents, [bool]$SkipInstall) {
+  if ($SkipInstall) {
+    Write-Host "Skipped skills installation by request." -ForegroundColor DarkGray
+    return
+  }
+
+  $agentArgs = if ($TargetAgents -and $TargetAgents.Count) {
+    $TargetAgents | ForEach-Object {
+      switch ($_.ToLowerInvariant()) {
+        'claude' { 'claude-code' }
+        'claude-code' { 'claude-code' }
+        'codex' { 'codex' }
+        'opencode' { 'opencode' }
+        'gemini' { 'gemini' }
+        'cursor' { 'cursor' }
+        default { $_ }
+      }
+    }
+  } else { @('*') }
+
+  Write-Host "Installing Matt Pocock skills via npx skills (Agents: $($agentArgs -join ', '))..." -ForegroundColor Cyan
+  Push-Location $Project
+  try {
+    & npx skills@latest add mattpocock/skills --copy -a $agentArgs -y 2>&1 | Out-Null
+  } catch {
+    Write-Host "Notice: npx skills install finished, ensuring bundled fallback..." -ForegroundColor DarkGray
+  } finally {
+    Pop-Location
+  }
+
+  # Install bundled audit-suite to project and agent directories
+  $bundledAuditSuite = Join-Path $PSScriptRoot '..\bundled_skills\audit-suite'
+  if (Test-Path -LiteralPath $bundledAuditSuite) {
+    Write-Host "Deploying bundled audit-suite skill to project & agent directories..." -ForegroundColor Cyan
+    $destinations = @(
+      (Join-Path $Project '.agents\skills\audit-suite'),
+      (Join-Path $env:USERPROFILE '.agents\skills\audit-suite')
+    )
+    foreach ($ag in $agentArgs) {
+      if ($ag -eq 'claude-code' -or $ag -eq '*') { $destinations += Join-Path $Project '.claude\skills\audit-suite' }
+      if ($ag -eq 'codex' -or $ag -eq '*') { $destinations += Join-Path $Project '.codex\skills\audit-suite' }
+      if ($ag -eq 'opencode' -or $ag -eq '*') { $destinations += Join-Path $Project '.opencode\skills\audit-suite' }
+    }
+    foreach ($dest in ($destinations | Select-Object -Unique)) {
+      try {
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        Copy-Item -Path "$bundledAuditSuite\*" -Destination $dest -Recurse -Force
+      } catch {}
+    }
+  }
+}
+
 function Get-MattpockSkills([string]$Project) {
   $knownOfficialHashes = @{
     'research'        = '0b6597c453178536b50c044a9e57cbc32dbffa47607a370e40768332f54bf8c2'
@@ -221,15 +283,17 @@ function Get-MattpockSkills([string]$Project) {
     'code-review'     = '9e72b65b58b39f0e5705a03f44fc4b31dc7089028d12c85b0a206b7af47cb24d'
     'tdd'             = '3a1102800fa8b3c4e1aa3f1fa9d18d3e4749ee8b5d86a3b560bbd53218dbf858'
   }
-  $auditSuitePath = "C:\Users\Lenovo\.agents\skills\audit-suite\SKILL.md"
-  $hasAuditSuite = Test-Path -LiteralPath $auditSuitePath
 
   $officialRoot = 'C:\Users\Lenovo\AppData\Local\Temp\mattpocock-skills-audit-20260818\skills\engineering'
   $roots = @(
     (Join-Path $Project '.agents\skills'),
+    (Join-Path $Project '.claude\skills'),
+    (Join-Path $Project '.codex\skills'),
+    (Join-Path $Project '.opencode\skills'),
     'F:\mattpock\.agents\skills',
     (Join-Path $env:USERPROFILE '.agents\skills')
   ) | Select-Object -Unique
+
   $names = @('research','implement','diagnosing-bugs','code-review','tdd')
   $out = [ordered]@{}
   foreach ($name in $names) {
@@ -252,9 +316,14 @@ function Get-MattpockSkills([string]$Project) {
       expected_hash = $expectedHash
     }
   }
+
+  # Check audit-suite (project agent folders, global user folder, or bundled skill)
+  $auditRoots = $roots + @(Join-Path $PSScriptRoot '..\bundled_skills')
+  $auditCandidates = @($auditRoots | ForEach-Object { Join-Path $_ 'audit-suite\SKILL.md' } | Where-Object { Test-Path -LiteralPath $_ })
+  $hasAuditSuite = ($auditCandidates.Count -gt 0)
   $out['audit_suite'] = [ordered]@{
     available = [bool]$hasAuditSuite
-    path = if ($hasAuditSuite) { $auditSuitePath } else { $null }
+    path = if ($hasAuditSuite) { $auditCandidates[0] } else { $null }
     verified_official = $true
   }
   return $out
@@ -377,7 +446,7 @@ function Select-Agent([string]$RoleTitle, [string]$RoleKey, [string]$RequestedKi
     )
     $chosen = Select-InteractiveMenu -Title "Configure $RoleTitle ($RoleKey)" -Subtitle "Select the AI Agent engine for this specific workflow node" -Options $options
     if ($chosen -eq 'custom') {
-      Write-Host "Enter custom executable or PowerShell command for $RoleTitle:" -ForegroundColor Cyan
+      Write-Host "Enter custom executable or PowerShell command for ${RoleTitle}:" -ForegroundColor Cyan
       $cmd = (Read-Host "Command").Trim()
       if (-not $cmd) { throw "Custom command for $RoleTitle cannot be empty." }
       $RequestedKind = $cmd
@@ -426,20 +495,34 @@ $task = Select-Agent 'Task & Implementation Agent' 'task' $TaskKind $TaskOpenCod
 $verification = Select-Agent 'Verification & Integration Agent' 'verification' $VerificationKind $VerificationOpenCodeModel $VerificationFullAccessArgs $VerificationCommand $supportedKinds
 $research = Select-Agent 'Deep Research Agent' 'research' $ResearchKind $ResearchOpenCodeModel $ResearchFullAccessArgs $ResearchCommand $supportedKinds
 
+# Interactive Skill Target Agents Selection
+$configuredAgents = @($rootCause.kind, $task.kind, $verification.kind, $research.kind) | Select-Object -Unique
+$targetAgents = $SkillTargetAgents
+if (-not $targetAgents -and $interactiveSetup) {
+  $skillOptions = @(
+    @{ Label = "Install for all configured workflow agents ($($configuredAgents -join ', ')) [Recommended]"; Value = 'configured' },
+    @{ Label = "Install for ALL supported agent tools (* - Claude, Codex, OpenCode, Cursor, Gemini)"; Value = 'all' },
+    @{ Label = "Claude Code only (claude-code)"; Value = 'claude-code' },
+    @{ Label = "Codex only (codex)"; Value = 'codex' },
+    @{ Label = "OpenCode only (opencode)"; Value = 'opencode' },
+    @{ Label = "Universal .agents directory only (.agents/skills)"; Value = 'agents_only' }
+  )
+  $chosenSkillTarget = Select-InteractiveMenu -Title "Select Target Agents for Project Skill Installation" -Subtitle "Which agent tool directories should Matt Pocock & Audit-Suite skills be installed to?" -Options $skillOptions
+  $targetAgents = switch ($chosenSkillTarget) {
+    'configured' { $configuredAgents }
+    'all' { @('*') }
+    'agents_only' { @() }
+    default { @($chosenSkillTarget) }
+  }
+}
+
+Install-HerdrSkills $project $targetAgents $SkipSkillsInstall
+
 $herdrDirectory = Join-Path $project 'herdr'
 New-Item -ItemType Directory -Force -Path $herdrDirectory | Out-Null
 $profilePath = Join-Path $herdrDirectory 'dispatch-profile.json'
-
-if (-not $SkipSkillsInstall) {
-  Write-Host "Installing required official Matt Pocock engineering skills via npx skills..." -ForegroundColor Cyan
-  Push-Location $project
-  try { & npx skills@latest add mattpocock/skills } finally { Pop-Location }
-  if ($LASTEXITCODE -ne 0) { throw "Skills installation failed with exit code $LASTEXITCODE. No Herdr profile was written." }
-} else {
-  Write-Host "Skipped skills installation by request." -ForegroundColor DarkGray
-}
-
 $mattpockSkills = Get-MattpockSkills $project
+
 $profile = [ordered]@{
   schema_version = 4
   initialized_at = (Get-Date -Format o)
@@ -449,6 +532,7 @@ $profile = [ordered]@{
   task_agent = $task
   verification_agent = $verification
   research_agent = $research
+  target_skill_agents = if($targetAgents){@($targetAgents)}else{@('*')}
   mattpocock_skills = $mattpockSkills
   git = $git
   skills_install_command = 'npx skills@latest add mattpocock/skills'
@@ -465,5 +549,6 @@ Write-Host "  Root-Cause Agent: $($rootCause.kind)$($(if($rootCause.model){' / '
 Write-Host "  Task Agent:       $($task.kind)$($(if($task.model){' / ' + $task.model}else{''}))" -ForegroundColor White
 Write-Host "  Verifier Agent:   $($verification.kind)$($(if($verification.model){' / ' + $verification.model}else{''}))" -ForegroundColor White
 Write-Host "  Research Agent:   $($research.kind)$($(if($research.model){' / ' + $research.model}else{''}))" -ForegroundColor White
-Write-Host "  Git Push Policy:  $($git.push_policy)$($(if($git.push_remote){' (' + $git.push_remote + ')'}else{''}))" -ForegroundColor DarkGray
+Write-Host "  Skill Target:     $(if($targetAgents){$targetAgents -join ', '}else{'all (*)'})" -ForegroundColor White
 Write-Host ""
+

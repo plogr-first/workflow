@@ -265,6 +265,8 @@ function Install-HerdrSkills([string]$Project, [string[]]$TargetAgents, [bool]$S
       if ($ag -eq 'claude-code' -or $ag -eq '*') { $destinations += Join-Path $Project '.claude\skills\audit-suite' }
       if ($ag -eq 'codex' -or $ag -eq '*') { $destinations += Join-Path $Project '.codex\skills\audit-suite' }
       if ($ag -eq 'opencode' -or $ag -eq '*') { $destinations += Join-Path $Project '.opencode\skills\audit-suite' }
+      if ($ag -eq 'cursor' -or $ag -eq '*') { $destinations += Join-Path $Project '.cursor\skills\audit-suite' }
+      if ($ag -eq 'gemini' -or $ag -eq '*') { $destinations += Join-Path $Project '.gemini\skills\audit-suite' }
     }
     foreach ($dest in ($destinations | Select-Object -Unique)) {
       try {
@@ -290,6 +292,8 @@ function Get-MattpockSkills([string]$Project) {
     (Join-Path $Project '.claude\skills'),
     (Join-Path $Project '.codex\skills'),
     (Join-Path $Project '.opencode\skills'),
+    (Join-Path $Project '.cursor\skills'),
+    (Join-Path $Project '.gemini\skills'),
     'F:\mattpock\.agents\skills',
     (Join-Path $env:USERPROFILE '.agents\skills')
   ) | Select-Object -Unique

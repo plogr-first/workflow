@@ -11,15 +11,15 @@ $ErrorActionPreference = 'Stop'
 if ($env:HERDR_ENV -ne '1') { throw 'HERDR_ENV is not 1. Start a workflow from a Herdr-managed pane.' }
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $profilePath = Join-Path $project 'herdr\dispatch-profile.json'
-if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw "Herdr dispatch profile not found: $profilePath. Run 'herdr init' first." }
+if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw "Herdr dispatch profile not found: $profilePath. Run 'npx plogr-workflow' first." }
 $profile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json
 $session = [string]$profile.herdr_session.name
 if ([string]::IsNullOrWhiteSpace($session)) { throw "Herdr profile is missing herdr_session.name: $profilePath" }
 $git = $profile.git
 if (-not $git) { $git = [ordered]@{ repository = $false; has_commit = $false; target_branch = $null; push_policy = 'manual'; push_remote = $null } }
-if ($Mode -ne 'research' -and $git.repository -and -not $git.has_commit) { throw "Git is initialized but has no baseline commit in $project. Review the project, create the first commit, rerun 'herdr init', then dispatch task/bugfix." }
+if ($Mode -ne 'research' -and $git.repository -and -not $git.has_commit) { throw "Git is initialized but has no baseline commit in $project. Review the project, create the first commit, rerun 'npx plogr-workflow', then dispatch task/bugfix." }
 $requiredSkills = if($Mode -eq 'research'){@('research')}elseif($Mode -eq 'bugfix'){@('diagnosing-bugs','implement','code-review')}else{@('implement','code-review')}
-foreach($skill in $requiredSkills){$entry=$profile.mattpocock_skills.$skill;if(-not $entry -or -not $entry.available -or $entry.verified_official -ne $true){throw "Required mattpocock skill '$skill' is unavailable. Re-run 'herdr init' after installing the skill."}}
+foreach($skill in $requiredSkills){$entry=$profile.mattpocock_skills.$skill;if(-not $entry -or -not $entry.available -or $entry.verified_official -ne $true){throw "Required mattpocock skill '$skill' is unavailable. Re-run 'npx plogr-workflow' after installing the skill."}}
 $stamp = Get-Date -Format 'HHmmssfff'
 function New-AgentName([string]$Prefix) {
   # Preserve the role suffix inside Herdr's 32-character name limit; truncating

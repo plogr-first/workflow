@@ -11,7 +11,7 @@ if ($FromBash) { $env:HERDR_ENV='1' }
 if ($env:HERDR_ENV -ne '1') { throw 'HERDR_ENV is not 1. Run herdr resume from a Herdr-managed pane.' }
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $profilePath = Join-Path $project 'herdr\dispatch-profile.json'
-if (-not (Test-Path $profilePath)) { throw "Herdr dispatch profile not found: $profilePath. Run 'herdr init' first." }
+if (-not (Test-Path $profilePath)) { throw "Herdr dispatch profile not found: $profilePath. Run 'npx plogr-workflow' first." }
 $profile = Get-Content $profilePath -Raw | ConvertFrom-Json
 $boundSession = [string]$profile.herdr_session.name
 if ($SessionName -and $SessionName -ne $boundSession) { throw "Project is bound to Herdr session '$boundSession', not '$SessionName'." }

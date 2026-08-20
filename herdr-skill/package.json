@@ -1,0 +1,42 @@
+{
+  "name": "plogr-workflow",
+  "version": "1.0.0",
+  "description": "Initialize Herdr multi-agent workflow projects — zero-collision AI orchestration by Plogr",
+  "bin": {
+    "plogr-workflow": "./bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "bundled_skills/",
+    "skills/",
+    "references/",
+    "agents/",
+    "SKILL.md"
+  ],
+  "keywords": [
+    "plogr",
+    "herdr",
+    "ai",
+    "agent",
+    "workflow",
+    "orchestrator",
+    "multi-agent",
+    "claude",
+    "codex",
+    "opencode",
+    "gemini",
+    "audit-suite",
+    "mattpocock"
+  ],
+  "author": "plogr",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plogr-first/workflow.git",
+    "directory": "herdr-skill"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

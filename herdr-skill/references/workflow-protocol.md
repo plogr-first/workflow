@@ -46,7 +46,7 @@ Verification gates:
 
 On pass, verifier confirms target tree is clean and at expected base, merges safely, runs applicable post-merge verification, records merge SHA, and emits `merged`. Never force reset, clean, stash, or overwrite unrelated changes.
 
-`herdr init` runs `git init` by default only when the project is not already a Git repository. It never creates the first project-wide commit, configures a remote, or publishes code without user direction. It adds `herdr/` and `.worktrees/` to `.gitignore` for a newly initialized repository.
+`npx plogr-workflow` runs `git init` by default only when the project is not already a Git repository. It never creates the first project-wide commit, configures a remote, or publishes code without user direction. It adds `herdr/` and `.worktrees/` to `.gitignore` for a newly initialized repository.
 
 ### GitHub Integration & Submission with GitHub CLI (`gh`)
 
@@ -73,6 +73,6 @@ A verifier reports only reproducible P0/P1 blockers, maximum five. Every item st
 
 ## Durable resume and session identity
 
-`herdr init` binds a project profile to one named Herdr session. Every formal `workflow.json` records that session, a unique workflow ID, task/verifier Agent names, current role, and repair round. `herdr resume` only considers unfinished workflows in the bound project/session. It reads `events.jsonl`, handoff files, progress files, and Git/worktree state; it never infers identity from a pane title or chat history. If the recorded Agent is gone, it starts a replacement generation and updates the workflow state before continuing. Multiple resumable workflows require an explicit workflow ID or `--all`. Terminal states are never reactivated.
+`npx plogr-workflow` binds a project profile to one named Herdr session. Every formal `workflow.json` records that session, a unique workflow ID, task/verifier Agent names, current role, and repair round. `herdr resume` only considers unfinished workflows in the bound project/session. It reads `events.jsonl`, handoff files, progress files, and Git/worktree state; it never infers identity from a pane title or chat history. If the recorded Agent is gone, it starts a replacement generation and updates the workflow state before continuing. Multiple resumable workflows require an explicit workflow ID or `--all`. Terminal states are never reactivated.
 
-Use the official mattpocock engineering skills recorded by `herdr init`: research uses `/research`; task execution uses `/implement`, `/tdd` at confirmed seams, then `/code-review`; bugfix uses `/diagnosing-bugs`, `/tdd` where appropriate, then `/code-review`; verification uses `/code-review` against the fixed point `base_sha...candidate_sha`. `/code-review` is independent review, not the merge authority: the verifier separately runs the Herdr acceptance and API-contract gates before integration. A missing required skill is a blocker, never an assumed pass.
+Use the official mattpocock engineering skills recorded by `npx plogr-workflow`: research uses `/research`; task execution uses `/implement`, `/tdd` at confirmed seams, then `/code-review`; bugfix uses `/diagnosing-bugs`, `/tdd` where appropriate, then `/code-review`; verification uses `/code-review` against the fixed point `base_sha...candidate_sha`. `/code-review` is independent review, not the merge authority: the verifier separately runs the Herdr acceptance and API-contract gates before integration. A missing required skill is a blocker, never an assumed pass.

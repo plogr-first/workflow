@@ -72,7 +72,7 @@ $skillManifest = $null
 if ($Profile) {
   if ($Kind) { throw 'Use either -Kind or -Profile, not both.' }
   $profilePath = Join-Path $project 'herdr\dispatch-profile.json'
-  if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw "Herdr dispatch profile not found: $profilePath. Run 'herdr init' from the project root first." }
+  if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw "Herdr dispatch profile not found: $profilePath. Run 'npx plogr-workflow' from the project root first." }
   try { $dispatchProfile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json } catch { throw "Invalid Herdr dispatch profile: $profilePath" }
   if (-not $script:HerdrSession) { $script:HerdrSession = [string]$dispatchProfile.herdr_session.name }
   if ([string]::IsNullOrWhiteSpace($script:HerdrSession)) { throw "Herdr profile is missing herdr_session.name: $profilePath. Session must be strictly specified." }
@@ -98,7 +98,7 @@ if ($Access -eq 'full' -and $profileNativeArgs.Count) {
     'gemini' { if($Access -eq 'full'){$nativeArgs+='--yolo'}else{$nativeArgs+=@('--approval-mode','plan')} }
     'codex' { if($Access -eq 'full'){$nativeArgs+='--dangerously-bypass-approvals-and-sandbox'}else{$nativeArgs+=@('-s','workspace-write','-a','on-request')} }
     'opencode' { if($Access -eq 'full'){$nativeArgs+='--auto'} }
-    default { if($Access -eq 'full'){throw "Custom Herdr kind '$Kind' requires a project profile with full_access_args. Run 'herdr init'."}else{throw "Plan mode is not defined for custom Herdr kind '$Kind'."} }
+    default { if($Access -eq 'full'){throw "Custom Herdr kind '$Kind' requires a project profile with full_access_args. Run 'npx plogr-workflow'."}else{throw "Plan mode is not defined for custom Herdr kind '$Kind'."} }
   }
 }
 if ($Kind -eq 'opencode' -and $OpenCodeModel) { $OpenCodeModel=Resolve-OpenCodeModel $OpenCodeModel; $nativeArgs+=@('-m',$OpenCodeModel) }

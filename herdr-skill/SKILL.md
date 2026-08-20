@@ -8,8 +8,8 @@ description: "Use when the user explicitly invokes /herdr or asks to launch, coo
 ## Entry
 
 - Use this Skill only for an explicit Herdr request.
-- For dispatch, require `HERDR_ENV=1`. `herdr init` is the only exception.
-- Read `<project>/herdr/dispatch-profile.json` once. If absent, tell the user to run `herdr init` in that project; do not install wrappers, modify PATH, or run `npx` yourself.
+- For dispatch, require `HERDR_ENV=1`. `npx plogr-workflow` is the only exception.
+- Read `<project>/herdr/dispatch-profile.json` once. If absent, tell the user to run `npx plogr-workflow` in that project; do not install wrappers, modify PATH, or run `npx` yourself.
 - Do not pre-run `herdr agent`, pane commands, `opencode models`, or inspect launcher source. The scripts do that when needed.
 - Do not hand-build pane IDs or invoke `herdr agent prompt` to advance a formal workflow.
 
@@ -48,7 +48,7 @@ The workflow launcher starts execution and deferred verification Agents, then th
 - API-affecting task/bugfix verification must include the API-contract gate.
 - **GitHub Operations**: All GitHub interactions (issues, PR creation, review, CI inspection, pushes) must use the GitHub CLI (`gh`) rather than manual browser steps or raw git remote pushes.
 
-Read [workflow protocol](references/workflow-protocol.md) before writing a brief or interpreting an outcome. On explicit script failure, read [troubleshooting](references/troubleshooting.md). Read [setup/runtime](references/setup-runtime.md) only for `herdr init`, wrappers, profiles, or model selection.
+Read [workflow protocol](references/workflow-protocol.md) before writing a brief or interpreting an outcome. On explicit script failure, read [troubleshooting](references/troubleshooting.md). Read [setup/runtime](references/setup-runtime.md) only for `npx plogr-workflow`, wrappers, profiles, or model selection.
 
 ## Completion
 

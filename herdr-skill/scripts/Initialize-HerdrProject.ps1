@@ -31,7 +31,7 @@ if ($Help) {
 Herdr Project Initialization
 
 Run from a project root:
-  herdr init
+  npx plogr-workflow
 
 The interactive flow selects root-cause, task, verification, and research agents, validates
 their terminal executables, installs official mattpocock/skills, verifies the engineering skill hashes,
@@ -64,11 +64,11 @@ function Show-HerdrBanner {
   }
 
   $bannerLines = @(
-    "  _   _  _____  ____   ____   ____  ",
-    " | | | || ____||  _ \ |  _ \ |  _ \ ",
-    " | |_| ||  _|  | |_) || | | || |_) |",
-    " |  _  || |___ |  _ < | |_| ||  _ < ",
-    " |_| |_||_____||_| \_\|____/ |_| \_"
+    "  ____   _       ___    ____  ____  ",
+    " |  _ \ | |     / _ \  / ___||  _ \ ",
+    " | |_) || |    | | | || |  _ | |_) |",
+    " |  __/ | |___ | |_| || |_| ||  _ < ",
+    " |_|    |_____| \___/  \____||_| \_\"
   )
 
   Write-Host ""
@@ -230,7 +230,7 @@ function Install-HerdrSkills([string]$Project, [string[]]$TargetAgents, [bool]$S
   }
 
   $agentArgs = if ($TargetAgents -and $TargetAgents.Count) {
-    $TargetAgents | ForEach-Object {
+    ($TargetAgents | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) | ForEach-Object {
       switch ($_.ToLowerInvariant()) {
         'claude' { 'claude-code' }
         'claude-code' { 'claude-code' }

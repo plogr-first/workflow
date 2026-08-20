@@ -129,7 +129,11 @@ function Agent-Live([string]$Name) {
 }
 function Acquire-Lease {
   if (Test-Path $lockPath) {
-    try { $old = Get-Content $lockPath -Raw | ConvertFrom-Json; if(([datetime]$old.lease_expires_at) -gt (Get-Date)){ return $false } } catch { }
+    try {
+      $old = Get-Content $lockPath -Raw | ConvertFrom-Json
+      $proc = Get-Process -Id $old.pid -ErrorAction SilentlyContinue
+      if ($proc -and ([datetime]$old.lease_expires_at) -gt (Get-Date)) { return $false }
+    } catch { }
   }
   $lease = [ordered]@{ controller_id = "$PID-$([guid]::NewGuid().ToString('N'))"; pid = $PID; lease_expires_at = (Get-Date).AddSeconds(30).ToString('o') }
   $tmp = "$lockPath.$([guid]::NewGuid().ToString('N')).tmp"; $lease | ConvertTo-Json | Set-Content $tmp -Encoding utf8; Move-Item $tmp $lockPath -Force

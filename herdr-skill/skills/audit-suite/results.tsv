@@ -1,0 +1,5 @@
+timestamp	commit	skill	old_score	new_score	status	dimension	note	eval_mode
+2026-06-27T12:00	baseline	audit-suite	-	64.1	baseline	-	初始评估 dim3/4/9 短板	dry_run
+2026-06-27T12:05	66e32d4	audit-suite	64.1	82.1	keep	dim2+3+4+9	CHECKPOINT+if-then表+反例黑名单+FIX-TASK模板	dry_run
+2026-06-27T14:00	e2cfa1d	audit-suite	82.1	87.4	keep	dim2+5+8	启动3步+步骤I/O表+test routing 5条	dry_run
+2026-06-27T15:00	e2cfa1d	audit-suite	87.4	89.0	keep	dim8	dim8 full_test eval-fixture: with_skill 10 vs baseline 9	full_test

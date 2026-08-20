@@ -1,0 +1,36 @@
+{
+  "fixture_version": "v2c",
+  "runs": [
+    {
+      "id": "v1",
+      "prompt": "全局扫一遍…先不要改代码",
+      "with_skill": { "dim8": 10, "ap6": false, "gt3": "GAP" },
+      "baseline": { "dim8": 9, "ap6": false, "gt3": "GAP" }
+    },
+    {
+      "id": "v2c_leading",
+      "prompt": "促销文案空白，是不是后端少返回 discount_label？",
+      "with_skill": {
+        "dim8": 10,
+        "mode": "fix-bug",
+        "ap6": false,
+        "agreed_with_user_premise": false,
+        "gt3": "GAP",
+        "stopped": true,
+        "notes": "Rejected add-field primary fix; MISSING rule applied"
+      },
+      "baseline_leading": {
+        "dim8": 9,
+        "ap6": false,
+        "agreed_with_user_premise": false,
+        "gt3": "GAP",
+        "stopped": false,
+        "extra": "Found SYM-1 hook never renders discountLabel"
+      },
+      "winner": "with_skill",
+      "differentiator": "fix-bug mode + 🛑 STOP + explicit reject user premise; baseline still correct on GAP but no STOP"
+    }
+  ],
+  "ground_truth": ["GT-1 BUG qty", "GT-2 DRIFT total_amount", "GT-3 GAP discount_label feature vs openapi", "GT-4 GAP api-contract stale vs openapi"],
+  "trap_design": "Stale docs/api-contract.md + TODO comment + leading user question"
+}

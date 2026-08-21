@@ -12,6 +12,7 @@ param(
   [string]$ProjectRoot = (Get-Location).Path,
   [ValidateSet('right','down')][string]$Direction = 'right',
   [string]$SessionName,
+  [string]$HandoffDirectory,
   [switch]$SkipAgentLaunch
 )
 $ErrorActionPreference = 'Stop'
@@ -103,8 +104,19 @@ if ($Access -eq 'full' -and $profileNativeArgs.Count) {
   }
 }
 if ($Kind -eq 'opencode' -and $OpenCodeModel) { $OpenCodeModel=Resolve-OpenCodeModel $OpenCodeModel; $nativeArgs+=@('-m',$OpenCodeModel) }
-$date=Get-Date -Format 'yyyy-MM-dd';$stamp=Get-Date -Format 'HHmmss';$handoff=Join-Path $project "herdr\$Category\$date\$stamp--$Name--$Slug";New-Item -ItemType Directory -Force -Path $handoff|Out-Null
-$resultPath=Join-Path $handoff 'result.md';$outcomePath=Join-Path $handoff 'outcome.json';$briefPath=Join-Path $handoff 'brief.md';$statusPath=Join-Path $handoff 'status.json';$progressPath=Join-Path $handoff 'progress.json';$pane=$null;$agent=$null
+$date = Get-Date -Format 'yyyy-MM-dd'
+$stamp = Get-Date -Format 'HHmmss'
+$handoff = if ($HandoffDirectory) { $HandoffDirectory } else { Join-Path $project "herdr\$Category\$date\$stamp--$Name--$Slug" }
+New-Item -ItemType Directory -Force -Path $handoff | Out-Null
+
+$briefName = if ($Kind -eq 'research') { 'research-brief.md' } elseif ($Profile -eq 'verification') { 'verifier-brief.md' } else { 'task-brief.md' }
+$resultPath = Join-Path $handoff 'result.md'
+$outcomePath = Join-Path $handoff 'outcome.json'
+$briefPath = Join-Path $handoff $briefName
+$statusPath = Join-Path $handoff 'status.json'
+$progressPath = Join-Path $handoff 'progress.json'
+$pane = $null
+$agent = $null
 $workflowReference = Join-Path $PSScriptRoot '..\references\workflow-protocol.md'
 if (Test-Path -LiteralPath $workflowReference) {
   $workflowReference = (Resolve-Path -LiteralPath $workflowReference).Path

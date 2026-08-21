@@ -20,7 +20,7 @@ if (-not (Test-Path -LiteralPath $profilePath)) {
 }
 
 $profile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json
-$boundSession = if ($profile.herdr_session) { $profile.herdr_session } else { 'default' }
+$boundSession = if ($profile.herdr_session.name) { [string]$profile.herdr_session.name } elseif ($profile.herdr_session) { [string]$profile.herdr_session } else { 'default' }
 $targetSession = if ($SessionName) { $SessionName } else { $boundSession }
 if ($targetSession -ne $boundSession) {
   throw "Session mismatch: Project is bound to Herdr session '$boundSession', but '$targetSession' was requested."

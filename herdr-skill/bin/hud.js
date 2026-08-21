@@ -16,6 +16,9 @@ const isLive = process.argv.includes('--live') || process.argv.includes('-l') ||
 const isPopup = process.argv.includes('--popup');
 
 function findActiveWorkflow(root) {
+  if (root && root.endsWith('.json') && fs.existsSync(root)) {
+    try { return JSON.parse(fs.readFileSync(root, 'utf8')); } catch { return null; }
+  }
   const herdrDir = path.join(root, 'herdr');
   if (!fs.existsSync(herdrDir)) return null;
 
@@ -77,10 +80,10 @@ function renderHud(wf) {
   const state = wf.state || 'idle';
   const mode = wf.mode || 'task';
   const repairRound = wf.repair_round || 0;
-  const matrix = wf.matrix;
+  const matrix = Array.isArray(wf.matrix) ? wf.matrix : (wf.matrix ? [wf.matrix] : null);
 
   // Matrix Parallel View
-  if (matrix && Array.isArray(matrix) && matrix.length > 0) {
+  if (matrix && matrix.length > 0) {
     const badges = matrix.map((m, idx) => {
       const isDone = ['candidate', 'merged', 'done'].includes(m.status);
       if (isDone) {

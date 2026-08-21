@@ -87,6 +87,10 @@ function showHelp() {
 \x1b[1;37m用法 (Usage):\x1b[0m
   \x1b[36mplogr\x1b[0m                        快速启动/连接到当前项目的 Herdr 复合终端
   \x1b[36mplogr init\x1b[0m                   初始化项目 Dispatch 档案并安装 AI 技能
+  \x1b[36mplogr change\x1b[0m                 \x1b[1;32m[懒人命令]\x1b[0m 终端交互式菜单修改各环节 Agent (按数字一键切换)
+  \x1b[36mplogr change <role> <agent>\x1b[0m  \x1b[1;32m[单项修改]\x1b[0m 极速修改单项 (例: plogr change task claude)
+  \x1b[36mplogr change preset <name>\x1b[0m   \x1b[1;32m[一键预设]\x1b[0m 一键应用预设 (all-claude, all-codex, cost-saver, balanced)
+  \x1b[36mplogr show / agents\x1b[0m          查看当前各环节 (Task/Bugfix/Verifier/Research) 的 Agent 配置
   \x1b[36mplogr hud\x1b[0m                    在终端启动 24-bit 炫彩流光实时动态看板 (HUD)
   \x1b[36mplogr status\x1b[0m                 瞬时打印当前工作流状态单行快照
   \x1b[36mplogr popup\x1b[0m                  全屏浮动看板模式
@@ -97,12 +101,197 @@ function showHelp() {
   \x1b[36mplogr <herdr指令...>\x1b[0m         直接透明透传执行原生 Herdr 指令 (如 pane split)
 
 \x1b[1;37m快捷参数 (Init Flags):\x1b[0m
-  --root-cause <agent>        根因分析 Agent (claude, codex, opencode)
-  --task <agent>              任务实现 Agent (codex, claude, opencode)
-  --verification <agent>      代码验收 Agent (codex, claude, opencode)
-  --research <agent>          深度调研 Agent (claude, codex, opencode)
+  --root-cause <agent>        根因分析 Agent (claude, codex, opencode, gemini, cursor)
+  --task <agent>              任务实现 Agent (codex, claude, opencode, gemini, cursor)
+  --verification <agent>      代码验收 Agent (codex, claude, opencode, gemini, cursor)
+  --research <agent>          深度调研 Agent (claude, codex, opencode, gemini, cursor)
   --session <name>            指定绑定的 Herdr 物理隔离 Session 名称
 `);
+}
+
+// ── Lazy Agent Configuration Helpers ──────────────────────────────
+const readline = require("readline");
+
+function askQuestion(query) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  return new Promise((resolve) => rl.question(query, (ans) => {
+    rl.close();
+    resolve(ans.trim());
+  }));
+}
+
+function loadProfileSafe(cwd = process.cwd()) {
+  const profilePath = path.join(cwd, "herdr", "dispatch-profile.json");
+  if (!fs.existsSync(profilePath)) {
+    const defaultProfile = {
+      schema_version: 4,
+      project_root: cwd,
+      herdr_session: { name: path.basename(cwd).toLowerCase().replace(/[^a-z0-9_-]/g, "-") || "default" },
+      task_agent: { kind: "codex" },
+      root_cause_agent: { kind: "claude" },
+      verification_agent: { kind: "claude" },
+      research_agent: { kind: "gemini" },
+      mattpocock_skills: {},
+      git: { repository: false, has_commit: false, target_branch: "main", push_policy: "manual" }
+    };
+    const herdrDir = path.join(cwd, "herdr");
+    if (!fs.existsSync(herdrDir)) fs.mkdirSync(herdrDir, { recursive: true });
+    fs.writeFileSync(profilePath, JSON.stringify(defaultProfile, null, 2), "utf8");
+    return { path: profilePath, data: defaultProfile };
+  }
+  try {
+    return { path: profilePath, data: JSON.parse(fs.readFileSync(profilePath, "utf8")) };
+  } catch (err) {
+    console.error(`\x1b[31m✗ 读取 profile 失败: ${err.message}\x1b[0m`);
+    process.exit(1);
+  }
+}
+
+function saveProfileSafe(profilePath, data) {
+  const tmp = `${profilePath}.tmp.${Date.now()}`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
+  fs.renameSync(tmp, profilePath);
+}
+
+function printAgentsTable(profile) {
+  console.log(`\n\x1b[1;38;2;56;189;248m┌───────────────────────┬──────────────────────────┬─────────────────────────────┐\x1b[0m`);
+  console.log(`\x1b[1;38;2;56;189;248m│\x1b[1;37m 工作流阶段 (Role)     \x1b[1;38;2;56;189;248m│\x1b[1;37m 当前 Agent (Kind)        \x1b[1;38;2;56;189;248m│\x1b[1;37m 模型/配置 (Model)           \x1b[1;38;2;56;189;248m│\x1b[0m`);
+  console.log(`\x1b[1;38;2;56;189;248m├───────────────────────┼──────────────────────────┼─────────────────────────────┤\x1b[0m`);
+  
+  const roles = [
+    { key: "task_agent", label: "1. 功能开发 (Task)", name: "task" },
+    { key: "root_cause_agent", label: "2. 缺陷诊断 (Bugfix)", name: "bugfix" },
+    { key: "verification_agent", label: "3. 独立验收 (Verifier)", name: "verifier" },
+    { key: "research_agent", label: "4. 技术调研 (Research)", name: "research" },
+  ];
+
+  for (const r of roles) {
+    const entry = profile[r.key] || { kind: "codex" };
+    const kind = entry.kind || "codex";
+    const model = entry.model || "(默认 / default)";
+    console.log(`\x1b[1;38;2;56;189;248m│\x1b[0m ${r.label.padEnd(21)} \x1b[1;38;2;56;189;248m│\x1b[0m \x1b[32m${kind.padEnd(24)}\x1b[0m \x1b[1;38;2;56;189;248m│\x1b[0m \x1b[33m${model.padEnd(27)}\x1b[0m \x1b[1;38;2;56;189;248m│\x1b[0m`);
+  }
+  console.log(`\x1b[1;38;2;56;189;248m└───────────────────────┴──────────────────────────┴─────────────────────────────┘\x1b[0m`);
+}
+
+function normalizeRoleKey(roleStr) {
+  const r = (roleStr || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  if (['task', 'task_agent', 'implement'].includes(r)) return 'task_agent';
+  if (['bugfix', 'bug', 'root-cause', 'root_cause', 'rootcause', 'root_cause_agent'].includes(r)) return 'root_cause_agent';
+  if (['verifier', 'verify', 'verification', 'verification_agent', 'audit'].includes(r)) return 'verification_agent';
+  if (['research', 'research_agent', 'investigate'].includes(r)) return 'research_agent';
+  return null;
+}
+
+function applyPreset(profile, presetName) {
+  const p = (presetName || "").toLowerCase();
+  if (p === 'all-claude' || p === 'claude') {
+    profile.task_agent = { kind: 'claude' };
+    profile.root_cause_agent = { kind: 'claude' };
+    profile.verification_agent = { kind: 'claude' };
+    profile.research_agent = { kind: 'claude' };
+  } else if (p === 'all-codex' || p === 'codex') {
+    profile.task_agent = { kind: 'codex' };
+    profile.root_cause_agent = { kind: 'codex' };
+    profile.verification_agent = { kind: 'codex' };
+    profile.research_agent = { kind: 'codex' };
+  } else if (p === 'all-gemini' || p === 'gemini') {
+    profile.task_agent = { kind: 'gemini' };
+    profile.root_cause_agent = { kind: 'gemini' };
+    profile.verification_agent = { kind: 'gemini' };
+    profile.research_agent = { kind: 'gemini' };
+  } else if (p === 'cost-saver' || p === 'deepseek') {
+    profile.task_agent = { kind: 'opencode', model: 'deepseek-coder' };
+    profile.root_cause_agent = { kind: 'opencode', model: 'deepseek-coder' };
+    profile.verification_agent = { kind: 'opencode', model: 'deepseek-coder' };
+    profile.research_agent = { kind: 'opencode', model: 'deepseek-chat' };
+  } else if (p === 'balanced') {
+    profile.task_agent = { kind: 'codex' };
+    profile.root_cause_agent = { kind: 'claude' };
+    profile.verification_agent = { kind: 'claude' };
+    profile.research_agent = { kind: 'gemini' };
+  } else {
+    throw new Error(`未知预设: "${presetName}"。可用预设: balanced, all-claude, all-codex, all-gemini, cost-saver`);
+  }
+}
+
+async function runInteractiveChange() {
+  const { path: profilePath, data: profile } = loadProfileSafe();
+  printAgentsTable(profile);
+
+  console.log(`\x1b[1;36m⚙️  请选择要修改的环节或预设:\x1b[0m`);
+  console.log(`   \x1b[1;33m1\x1b[0m) 功能开发 (Task Agent)       - 当前: \x1b[32m${profile.task_agent?.kind || 'codex'}\x1b[0m`);
+  console.log(`   \x1b[1;33m2\x1b[0m) 缺陷诊断 (Bugfix Agent)     - 当前: \x1b[32m${profile.root_cause_agent?.kind || 'codex'}\x1b[0m`);
+  console.log(`   \x1b[1;33m3\x1b[0m) 独立验收 (Verifier Agent)   - 当前: \x1b[32m${profile.verification_agent?.kind || 'codex'}\x1b[0m`);
+  console.log(`   \x1b[1;33m4\x1b[0m) 技术调研 (Research Agent)   - 当前: \x1b[32m${profile.research_agent?.kind || 'codex'}\x1b[0m`);
+  console.log(`   \x1b[1;33m5\x1b[0m) 一键应用预设方案 (Presets: All-Claude / All-Codex / Cost-Saver / Balanced)`);
+  console.log(`   \x1b[1;33m0\x1b[0m) 退出 (Exit)\n`);
+
+  const choice = await askQuestion(`\x1b[1;37m输入编号 (0-5) [默认 0]: \x1b[0m`);
+  if (!choice || choice === '0') {
+    console.log(`\x1b[90m已取消修改。\x1b[0m\n`);
+    process.exit(0);
+  }
+
+  if (choice === '5') {
+    console.log(`\n\x1b[1;36m🎯 请选择预设方案:\x1b[0m`);
+    console.log(`   \x1b[1;33m1\x1b[0m) \x1b[1;37mbalanced\x1b[0m    - 黄金组合 (Task: Codex, Bugfix: Claude, Verifier: Claude, Research: Gemini)`);
+    console.log(`   \x1b[1;33m2\x1b[0m) \x1b[1;37mall-claude\x1b[0m  - 全链路使用 Claude Code`);
+    console.log(`   \x1b[1;33m3\x1b[0m) \x1b[1;37mall-codex\x1b[0m   - 全链路使用 OpenAI Codex`);
+    console.log(`   \x1b[1;33m4\x1b[0m) \x1b[1;37mall-gemini\x1b[0m  - 全链路使用 Gemini CLI`);
+    console.log(`   \x1b[1;33m5\x1b[0m) \x1b[1;37mcost-saver\x1b[0m  - 极致性价比 (全链路 OpenCode + DeepSeek-Coder)`);
+    
+    const pChoice = await askQuestion(`\x1b[1;37m输入预设编号 (1-5): \x1b[0m`);
+    const presetMap = { '1': 'balanced', '2': 'all-claude', '3': 'all-codex', '4': 'all-gemini', '5': 'cost-saver' };
+    const pName = presetMap[pChoice];
+    if (pName) {
+      applyPreset(profile, pName);
+      saveProfileSafe(profilePath, profile);
+      console.log(`\n\x1b[32m✔ 已成功应用预设: \x1b[1;37m${pName}\x1b[0m`);
+      printAgentsTable(profile);
+    }
+    process.exit(0);
+  }
+
+  const roleMap = { '1': 'task_agent', '2': 'root_cause_agent', '3': 'verification_agent', '4': 'research_agent' };
+  const targetKey = roleMap[choice];
+  if (!targetKey) {
+    console.error(`\x1b[31m无效的选择: ${choice}\x1b[0m`);
+    process.exit(1);
+  }
+
+  console.log(`\n\x1b[1;36m🤖 请选择 Agent 引擎:\x1b[0m`);
+  console.log(`   \x1b[1;33m1\x1b[0m) \x1b[1;37mclaude\x1b[0m    (Claude Code)`);
+  console.log(`   \x1b[1;33m2\x1b[0m) \x1b[1;37mcodex\x1b[0m     (OpenAI Codex)`);
+  console.log(`   \x1b[1;33m3\x1b[0m) \x1b[1;37mopencode\x1b[0m  (OpenCode / DeepSeek / Qwen)`);
+  console.log(`   \x1b[1;33m4\x1b[0m) \x1b[1;37mgemini\x1b[0m    (Gemini CLI)`);
+  console.log(`   \x1b[1;33m5\x1b[0m) \x1b[1;37mcursor\x1b[0m    (Cursor Agent)`);
+
+  const aChoice = await askQuestion(`\x1b[1;37m输入编号或直接输入名称 (1-5) [默认 1]: \x1b[0m`) || '1';
+  const agentMap = { '1': 'claude', '2': 'codex', '3': 'opencode', '4': 'gemini', '5': 'cursor' };
+  const selectedAgent = agentMap[aChoice] || aChoice.toLowerCase();
+
+  let selectedModel = null;
+  if (selectedAgent === 'opencode') {
+    const mInput = await askQuestion(`\x1b[1;37m输入 OpenCode 模型名称 (例如 deepseek-coder / qwen-2.5-coder-32b) [回车使用默认]: \x1b[0m`);
+    if (mInput) selectedModel = mInput;
+  }
+
+  if (!profile[targetKey]) profile[targetKey] = {};
+  profile[targetKey].kind = selectedAgent;
+  if (selectedModel) {
+    profile[targetKey].model = selectedModel;
+  } else {
+    delete profile[targetKey].model;
+  }
+
+  saveProfileSafe(profilePath, profile);
+  console.log(`\n\x1b[32m✔ 已成功修改 \x1b[1;37m${targetKey}\x1b[0;32m 为 \x1b[1;37m${selectedAgent}\x1b[0m`);
+  printAgentsTable(profile);
+  process.exit(0);
 }
 
 // ── Ensure Global plogr Command In System PATH ────────────────────
@@ -220,7 +409,81 @@ if (['help', '--help', '-h'].includes(firstArg)) {
   process.exit(0);
 }
 
-// 2. HUD Subcommands (hud, status, popup)
+// 2. Change / Set / Show / Agents Configuration Subcommands
+if (['change', 'set', 'config', 'show', 'agents', 'preset'].includes(firstArg)) {
+  const subArgs = cliArgs.slice(1);
+  
+  if (firstArg === 'show' || firstArg === 'agents') {
+    const { data: profile } = loadProfileSafe();
+    printAgentsTable(profile);
+    process.exit(0);
+  }
+
+  if (firstArg === 'change' || firstArg === 'config') {
+    if (subArgs.length === 0) {
+      runInteractiveChange();
+      return;
+    }
+  }
+
+  const { path: profilePath, data: profile } = loadProfileSafe();
+
+  // Check if applying preset: plogr change preset <name> OR plogr preset <name> OR plogr change <preset-name>
+  const isPresetCmd = firstArg === 'preset' || subArgs[0] === 'preset' || ['all-claude', 'all-codex', 'all-gemini', 'cost-saver', 'deepseek', 'balanced'].includes((subArgs[0] || "").toLowerCase());
+  if (isPresetCmd) {
+    let presetName = firstArg === 'preset' ? subArgs[0] : (subArgs[0] === 'preset' ? subArgs[1] : subArgs[0]);
+    if (!presetName) {
+      console.error(`\x1b[31m✗ 缺少预设名称。\x1b[0m`);
+      console.error(`\x1b[36m💡 可用预设: balanced, all-claude, all-codex, all-gemini, cost-saver\x1b[0m\n`);
+      process.exit(1);
+    }
+    try {
+      applyPreset(profile, presetName);
+      saveProfileSafe(profilePath, profile);
+      console.log(`\n\x1b[32m✔ 已成功应用预设: \x1b[1;37m${presetName}\x1b[0m`);
+      printAgentsTable(profile);
+      process.exit(0);
+    } catch (err) {
+      console.error(`\x1b[31m✗ ${err.message}\x1b[0m\n`);
+      process.exit(1);
+    }
+  }
+
+  // Single role modification: plogr change <role> <agent> [model] OR plogr set <role> <agent> [model]
+  const roleArg = subArgs[0];
+  const agentArg = subArgs[1];
+  const modelArg = subArgs[2] || null;
+
+  const targetKey = normalizeRoleKey(roleArg);
+  if (!targetKey) {
+    console.error(`\x1b[31m✗ 未知的环节: "${roleArg}"。\x1b[0m`);
+    console.error(`\x1b[36m💡 支持的环节: task (开发), bugfix (诊断), verifier (验收), research (调研)\x1b[0m`);
+    console.error(`\x1b[90m   示例: plogr change task claude\x1b[0m\n`);
+    process.exit(1);
+  }
+
+  if (!agentArg) {
+    console.error(`\x1b[31m✗ 缺少 Agent 引擎名称。\x1b[0m`);
+    console.error(`\x1b[36m💡 支持的引擎: claude, codex, opencode, gemini, cursor\x1b[0m`);
+    console.error(`\x1b[90m   示例: plogr change ${roleArg} claude\x1b[0m\n`);
+    process.exit(1);
+  }
+
+  if (!profile[targetKey]) profile[targetKey] = {};
+  profile[targetKey].kind = agentArg.toLowerCase();
+  if (modelArg) {
+    profile[targetKey].model = modelArg;
+  } else {
+    delete profile[targetKey].model;
+  }
+
+  saveProfileSafe(profilePath, profile);
+  console.log(`\n\x1b[32m✔ 已成功将 \x1b[1;37m${targetKey}\x1b[0;32m 修改为 \x1b[1;37m${agentArg.toLowerCase()}${modelArg ? ' (' + modelArg + ')' : ''}\x1b[0m`);
+  printAgentsTable(profile);
+  process.exit(0);
+}
+
+// 3. HUD Subcommands (hud, status, popup)
 if (['status', 'hud', 'popup'].includes(firstArg)) {
   const hudArgs = [hudScript, ...cliArgs.slice(1)];
   if (firstArg === 'hud' && !hudArgs.includes('--live')) hudArgs.push('--live');

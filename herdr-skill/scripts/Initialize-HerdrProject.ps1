@@ -87,68 +87,105 @@ function Select-InteractiveMenu {
     [array]$Options,
     [int]$DefaultIndex = 0
   )
+
+  function Get-OptionValue($opt) {
+    if ($opt -is [hashtable] -or $opt -is [System.Collections.IDictionary]) { return $opt.Value }
+    return $opt
+  }
+
+  function Get-OptionLabel($opt) {
+    if ($opt -is [hashtable] -or $opt -is [System.Collections.IDictionary]) { return $opt.Label }
+    return $opt
+  }
+
   if ([Console]::IsInputRedirected) {
     Write-Host "$Title" -ForegroundColor Cyan
     if ($Subtitle) { Write-Host "$Subtitle" -ForegroundColor DarkGray }
     for ($i = 0; $i -lt $Options.Count; $i++) {
-      $label = if ($Options[$i] -is [hashtable] -or $Options[$i] -is [System.Collections.IDictionary]) { $Options[$i].Label } else { $Options[$i] }
-      Write-Host ("  [{0}] {1}" -f ($i + 1), $label)
+      Write-Host ("  [{0}] {1}" -f ($i + 1), (Get-OptionLabel $Options[$i]))
     }
     $choice = Read-Host "Choice (1-$($Options.Count)) [1]"
     $idx = 0
     if ([int]::TryParse($choice, [ref]$idx) -and $idx -ge 1 -and $idx -le $Options.Count) {
-      $val = $Options[$idx - 1]
-      return if ($val -is [hashtable] -or $val -is [System.Collections.IDictionary]) { $val.Value } else { $val }
+      return (Get-OptionValue $Options[$idx - 1])
     }
-    $def = $Options[0]
-    return if ($def -is [hashtable] -or $def -is [System.Collections.IDictionary]) { $def.Value } else { $def }
+    return (Get-OptionValue $Options[0])
   }
 
   $cursor = [Math]::Max(0, [Math]::Min($DefaultIndex, $Options.Count - 1))
   $origCursorVisible = $true
   try { $origCursorVisible = [Console]::CursorVisible; [Console]::CursorVisible = $false } catch {}
 
-  $startTop = [Console]::CursorTop
-  while ($true) {
-    [Console]::SetCursorPosition(0, $startTop)
-    Write-Host "┌─ $Title " -ForegroundColor Cyan -NoNewline
-    Write-Host "────────────────────────────────────────────────" -ForegroundColor DarkGray
-    if ($Subtitle) {
-      Write-Host "│  $Subtitle" -ForegroundColor DarkGray
-    }
-    Write-Host "│  Use ↑/↓ to navigate • Enter to select" -ForegroundColor DarkYellow
-    Write-Host "│" -ForegroundColor DarkGray
-    
-    for ($i = 0; $i -lt $Options.Count; $i++) {
-      $opt = $Options[$i]
-      $label = if ($opt -is [hashtable] -or $opt -is [System.Collections.IDictionary]) { $opt.Label } else { $opt }
-      if ($i -eq $cursor) {
-        Write-Host "│  " -ForegroundColor DarkGray -NoNewline
-        Write-Host " ❯ ● " -ForegroundColor Green -NoNewline
-        Write-Host "$label" -ForegroundColor White
-      } else {
-        Write-Host "│  " -ForegroundColor DarkGray -NoNewline
-        Write-Host "   ○ " -ForegroundColor DarkGray -NoNewline
-        Write-Host "$label" -ForegroundColor Gray
-      }
-    }
-    Write-Host "└─────────────────────────────────────────────────────" -ForegroundColor DarkGray
+  $e = [char]27
+  $linesRendered = 0
 
-    $key = [Console]::ReadKey($true)
-    switch ($key.Key) {
-      'UpArrow' { if ($cursor -gt 0) { $cursor-- } else { $cursor = $Options.Count - 1 } }
-      'DownArrow' { if ($cursor -lt ($Options.Count - 1)) { $cursor++ } else { $cursor = 0 } }
-      'Enter' {
-        try { [Console]::CursorVisible = $origCursorVisible } catch {}
-        Write-Host ""
-        $sel = $Options[$cursor]
-        return if ($sel -is [hashtable] -or $sel -is [System.Collections.IDictionary]) { $sel.Value } else { $sel }
+  try {
+    while ($true) {
+      if ($linesRendered -gt 0) {
+        try {
+          $targetTop = [Console]::CursorTop - $linesRendered
+          if ($targetTop -ge 0) {
+            [Console]::SetCursorPosition(0, $targetTop)
+          } else {
+            Write-Host "$e[${linesRendered}F" -NoNewline
+          }
+        } catch {
+          Write-Host "$e[${linesRendered}F" -NoNewline
+        }
+        Write-Host "$e[J" -NoNewline
       }
-      'Escape' {
-        try { [Console]::CursorVisible = $origCursorVisible } catch {}
-        throw "Selection cancelled by user."
+
+      $linesCount = 0
+
+      Write-Host "┌─ $Title $e[K" -ForegroundColor Cyan -NoNewline
+      Write-Host "────────────────────────────────────────────────$e[K" -ForegroundColor DarkGray
+      $linesCount++
+
+      if ($Subtitle) {
+        Write-Host "│  $Subtitle$e[K" -ForegroundColor DarkGray
+        $linesCount++
+      }
+
+      Write-Host "│  Use ↑/↓ to navigate • Enter to select$e[K" -ForegroundColor DarkYellow
+      $linesCount++
+
+      Write-Host "│$e[K" -ForegroundColor DarkGray
+      $linesCount++
+
+      for ($i = 0; $i -lt $Options.Count; $i++) {
+        $label = Get-OptionLabel $Options[$i]
+        if ($i -eq $cursor) {
+          Write-Host "│  " -ForegroundColor DarkGray -NoNewline
+          Write-Host " ❯ ● " -ForegroundColor Green -NoNewline
+          Write-Host "$label$e[K" -ForegroundColor White
+        } else {
+          Write-Host "│  " -ForegroundColor DarkGray -NoNewline
+          Write-Host "   ○ " -ForegroundColor DarkGray -NoNewline
+          Write-Host "$label$e[K" -ForegroundColor Gray
+        }
+        $linesCount++
+      }
+
+      Write-Host "└─────────────────────────────────────────────────────$e[K" -ForegroundColor DarkGray
+      $linesCount++
+
+      $linesRendered = $linesCount
+
+      $key = [Console]::ReadKey($true)
+      switch ($key.Key) {
+        'UpArrow' { if ($cursor -gt 0) { $cursor-- } else { $cursor = $Options.Count - 1 } }
+        'DownArrow' { if ($cursor -lt ($Options.Count - 1)) { $cursor++ } else { $cursor = 0 } }
+        'Enter' {
+          Write-Host ""
+          return (Get-OptionValue $Options[$cursor])
+        }
+        'Escape' {
+          throw "Selection cancelled by user."
+        }
       }
     }
+  } finally {
+    try { [Console]::CursorVisible = $origCursorVisible } catch {}
   }
 }
 

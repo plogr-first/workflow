@@ -246,7 +246,7 @@ Do not report completion only in the TUI.
   Start-Sleep -Seconds 5
   $agent=Start-AgentWhenPaneReady $pane $nativeArgs
   if(-not $agent -or $agent.agent -ne $Kind -or -not $agent.interactive_ready){throw 'Herdr did not return a confirmed interactive agent.'}
-  $status=[ordered]@{name=$Name;kind=$Kind;access=$Access;model=$OpenCodeModel;profile=$Profile;deferred=[bool]$DeferActivation;pane_id=$pane;started_at=(Get-Date -Format o);brief_path=$briefPath;result_path=$resultPath;outcome_path=$outcomePath;progress_path=$progressPath;start_result=$agent}
+  $status=[ordered]@{name=$Name;kind=$Kind;access=$Access;model=$OpenCodeModel;profile=$Profile;deferred=[bool]$DeferActivation;pane_id=$pane;session_name=$script:HerdrSession;started_at=(Get-Date -Format o);brief_path=$briefPath;result_path=$resultPath;outcome_path=$outcomePath;progress_path=$progressPath;start_result=$agent}
   $status|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $statusPath -Encoding utf8
   [ordered]@{phase='investigating';updated_at=(Get-Date -Format o);completed=@();next_action=if($DeferActivation){'wait for workflow monitor activation'}else{'read brief and begin role work'}}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath $progressPath -Encoding utf8
   $watchPid=$null
@@ -255,7 +255,8 @@ Do not report completion only in the TUI.
     if($Kind -eq 'opencode'){Start-Sleep -Seconds 3;Invoke-HerdrJson @('pane','send-text',$pane,$message)|Out-Null;Invoke-HerdrJson @('pane','send-keys',$pane,'enter')|Out-Null}else{Invoke-HerdrJson @('agent','prompt',$Name,$message)|Out-Null}
     $watcher=Join-Path $PSScriptRoot 'Watch-HerdrHandoff.ps1'
     $psHost = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-    $watchArgs="-NoProfile -ExecutionPolicy Bypass -File `"$watcher`" -AgentName `"$Name`" -StatusPath `"$statusPath`" -OutcomePath `"$outcomePath`""
+    $sessionArg = if ($script:HerdrSession) { " -SessionName `"$script:HerdrSession`"" } else { "" }
+    $watchArgs="-NoProfile -ExecutionPolicy Bypass -File `"$watcher`" -AgentName `"$Name`" -StatusPath `"$statusPath`" -OutcomePath `"$outcomePath`"$sessionArg"
     $watch=Start-Process -FilePath $psHost -ArgumentList $watchArgs -WindowStyle Hidden -PassThru
     $watchPid=$watch.Id
   }

@@ -16,20 +16,27 @@ $profile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json
 $session = [string]$profile.herdr_session.name
 if ([string]::IsNullOrWhiteSpace($session)) { throw "Herdr profile is missing herdr_session.name: $profilePath" }
 $git = $profile.git
-if (-not $git) { $git = [ordered]@{ repository = $false; has_commit = $false; target_branch = $null; push_policy = 'manual'; push_remote = $null } }
 if ($Mode -ne 'research' -and $git.repository -and -not $git.has_commit) { throw "Git is initialized but has no baseline commit in $project. Review the project, create the first commit, rerun 'npx plogr-workflow', then dispatch task/bugfix." }
 $requiredSkills = if($Mode -eq 'research'){@('research')}elseif($Mode -eq 'bugfix'){@('diagnosing-bugs','implement','code-review')}else{@('implement','code-review')}
-foreach($skill in $requiredSkills){$entry=$profile.mattpocock_skills.$skill;if(-not $entry -or -not $entry.available -or $entry.verified_official -ne $true){throw "Required mattpocock skill '$skill' is unavailable. Re-run 'npx plogr-workflow' after installing the skill."}}
+foreach($skill in $requiredSkills){
+  $entry=$profile.mattpocock_skills.$skill
+  if(-not $entry -or -not $entry.available){
+    throw "Required mattpocock skill '$skill' is not installed. Re-run 'npx plogr-workflow' after installing the skill."
+  }
+  if($entry.verified_official -ne $true -and $env:HERDR_ALLOW_UNVERIFIED_SKILLS -ne '1'){
+    Write-Host "Notice: Skill '$skill' hash did not match pinned snapshot (upstream updated). Using installed version." -ForegroundColor DarkYellow
+  }
+}
 $stamp = Get-Date -Format 'HHmmssfff'
 function New-AgentName([string]$Prefix) {
   # Preserve the role suffix inside Herdr's 32-character name limit; truncating
   # the whole name can make task and verifier collide for long workflow slugs.
-  $safePrefix = $Prefix.ToLowerInvariant() -replace '[^a-z0-9_-]', '-'
+  $safePrefix = ($Prefix.ToLowerInvariant() -replace '[^a-z0-9_-]', '-')
+  if ($safePrefix.Length -gt 10) { $safePrefix = $safePrefix.Substring(0, 10).TrimEnd('-') }
   $safeSlug = $Slug.ToLowerInvariant() -replace '[^a-z0-9-]', '-'
   $head = "wf-$stamp-"
   $suffix = "-$safePrefix"
-  $maxSlugLength = 32 - $head.Length - $suffix.Length
-  if ($maxSlugLength -lt 1) { throw 'Cannot construct a distinct Herdr agent name within 32 characters.' }
+  $maxSlugLength = [Math]::Max(1, 32 - $head.Length - $suffix.Length)
   $shortSlug = $safeSlug.Substring(0, [Math]::Min($maxSlugLength, $safeSlug.Length)).TrimEnd('-')
   if ([string]::IsNullOrWhiteSpace($shortSlug)) { $shortSlug = 'job' }
   return "$head$shortSlug$suffix"

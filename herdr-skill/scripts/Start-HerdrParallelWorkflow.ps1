@@ -74,7 +74,7 @@ $agentScript = Join-Path $PSScriptRoot 'Start-HerdrAgent.ps1'
 foreach ($sub in $matrix) {
   $subId = [string]$sub.id
   $subSlug = "$Slug-$subId"
-  $subAgentKind = if ($sub.agent) { [string]$sub.agent } else { [string]$profile.task.agent }
+  $subAgentKind = if ($sub.agent) { [string]$sub.agent } elseif ($profile.task_agent.kind) { [string]$profile.task_agent.kind } else { 'codex' }
   $subPrompt = [string]$sub.prompt
   $subScope = if ($sub.scope) { [string]$sub.scope } else { '**/*' }
 
@@ -152,7 +152,23 @@ $fullPrompt
   }
 }
 
-# 2. Prepare Master Workflow JSON
+# 2. Prepare Verifier & Master Workflow JSON
+$verAgentKind = if ($profile.verification_agent.kind) { [string]$profile.verification_agent.kind } elseif ($profile.verification.agent) { [string]$profile.verification.agent } else { 'codex' }
+$verifierName = "wf-verify-$Slug-$verAgentKind"
+if ($verifierName.Length -gt 32) { $verifierName = $verifierName.Substring(0, 32) }
+$verifierHandoff = Join-Path $wfDir 'verifier'
+New-Item -ItemType Directory -Force -Path $verifierHandoff | Out-Null
+$verResult = Join-Path $verifierHandoff 'verify-result.md'
+$verOutcome = Join-Path $verifierHandoff 'verify-outcome.json'
+$verBrief = Join-Path $verifierHandoff 'verifier-brief.md'
+
+if (-not $SkipAgentLaunch) {
+  $waitPrompt = "You are the deferred verification Agent for parallel workflow $Slug. Do not begin review until the workflow monitor merges all candidate branches into .worktrees/wf-$Slug-integration and wakes you. When awakened, use /code-review, verify 5 gates, and write result.md, verification.md, and outcome.json."
+  try {
+    $verObj = & $agentScript -Profile verification -DeferActivation -Name $verifierName -Category 'task' -Slug "$Slug-verify" -Prompt $waitPrompt -ProjectRoot $project -SessionName $targetSession -Direction down -HandoffDirectory $verifierHandoff | ConvertFrom-Json
+  } catch {}
+}
+
 $masterWf = [ordered]@{
   schema_version = 3
   workflow_id = $wfId
@@ -166,26 +182,35 @@ $masterWf = [ordered]@{
   max_repair_rounds = 2
   created_at = (Get-Date -Format o)
   updated_at = (Get-Date -Format o)
+  last_processed = [ordered]@{ task_outcome_hash = $null; verifier_outcome_hash = $null }
   matrix = $matrixItems
   git = $profile.git
   verifier = [ordered]@{
-    name = "wf-verify-$Slug-$($profile.verification.agent)"
-    original_agent_name = "wf-verify-$Slug-$($profile.verification.agent)"
-    active_agent_name = "wf-verify-$Slug-$($profile.verification.agent)"
-    handoff = (Join-Path $wfDir 'verifier')
-    brief = (Join-Path $wfDir 'verifier\verifier-brief.md')
-    result = (Join-Path $wfDir 'verifier\verify-result.md')
-    outcome = (Join-Path $wfDir 'verifier\verify-outcome.json')
+    name = $verifierName
+    original_agent_name = $verifierName
+    active_agent_name = $verifierName
+    handoff = $verifierHandoff
+    brief = $verBrief
+    result = $verResult
+    outcome = $verOutcome
   }
 }
 
 $masterWf | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $wfPath -Encoding utf8
 
+# 3. Start Background Monitor
+$monitor = Join-Path $PSScriptRoot 'Monitor-HerdrWorkflow.ps1'
+$psHost = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+$monitorArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -WorkflowPath `"$wfPath`""
+$process = Start-Process -FilePath $psHost -ArgumentList $monitorArgs -WindowStyle Hidden -PassThru
+
 Write-Host "`n╔═════════════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
 Write-Host "║  🚀 PLOGR MATRIX PARALLEL WORKFLOW DISPATCHED                           ║" -ForegroundColor Cyan
 Write-Host "║  Master Workflow : $wfId" -ForegroundColor DarkCyan
 Write-Host "║  Parallel Matrix : $($matrix.Count) Sub-Worktrees Mounted" -ForegroundColor DarkCyan
+Write-Host "║  Monitor Process : PID $($process.Id)" -ForegroundColor DarkCyan
 Write-Host "║  Session Name    : $targetSession" -ForegroundColor DarkCyan
 Write-Host "╚═════════════════════════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
 
 return $wfPath
+

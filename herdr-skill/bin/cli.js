@@ -16,6 +16,7 @@
  *   plogr task [prompt]          # Dispatch a task workflow
  *   plogr bugfix [prompt]        # Dispatch a bugfix workflow
  *   plogr parallel [matrix.json] # Dispatch a matrix parallel worktree workflow
+ *   plogr prune                  # Auto-prune and clean up merged/stale worktrees
  *   plogr attach [session]       # Attach to a specific Herdr session
  *   plogr [herdr-command...]     # Pass through directly to herdr CLI
  */
@@ -259,18 +260,65 @@ if (!firstArg || firstArg === 'attach') {
   return;
 }
 
-// 4. Workflow Task / Bugfix Subcommands
-if (['task', 'bugfix'].includes(firstArg)) {
+// ── Scan Active Worktrees (Protection from Pruning) ───────────────
+function getActiveWorktrees(projectRoot) {
+  const active = new Set();
+  const herdrDir = path.join(projectRoot, "herdr");
+  if (!fs.existsSync(herdrDir)) return active;
+
+  function scan(dir) {
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          scan(full);
+        } else if (e.isFile() && e.name === "workflow.json") {
+          try {
+            const wf = JSON.parse(fs.readFileSync(full, "utf8"));
+            if (["executing", "candidate", "verifying", "repairing"].includes(wf.state)) {
+              if (wf.task?.worktree_path) {
+                active.add(path.resolve(wf.task.worktree_path).toLowerCase());
+              }
+              if (Array.isArray(wf.matrix)) {
+                for (const m of wf.matrix) {
+                  if (m.worktree_path) active.add(path.resolve(m.worktree_path).toLowerCase());
+                }
+              }
+              if (wf.slug) {
+                const intPath = path.resolve(path.join(projectRoot, ".worktrees", `wf-${wf.slug}-integration`));
+                active.add(intPath.toLowerCase());
+              }
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+  scan(herdrDir);
+  return active;
+}
+
+// 4. Workflow Task / Bugfix / Research Subcommands
+if (['task', 'bugfix', 'research'].includes(firstArg)) {
+  if (process.env.HERDR_ENV !== '1') {
+    console.error(`\x1b[33m⚠️ 提示: 当前未处于 Herdr 复合终端环境中 (HERDR_ENV != 1)。\x1b[0m`);
+    console.error(`\x1b[36m💡 请先在当前项目目录运行 \x1b[1;37mplogr\x1b[0;36m 启动/连接 Herdr 复合终端，然后在 Herdr 窗格中派发工作流。\x1b[0m\n`);
+  }
+
   const psHost = findPowerShell();
   const prompt = cliArgs.slice(1).join(" ") || "General task execution";
+  const autoSlug = (cliArgs[1] || firstArg).toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 16).replace(/^-|-$/g, "") || `${firstArg}-${Date.now().toString(36)}`;
   const psArgs = [
     "-NoProfile",
     "-ExecutionPolicy",
     "Bypass",
     "-File",
     workflowScript,
-    "-Category",
+    "-Mode",
     firstArg,
+    "-Slug",
+    autoSlug,
     "-Prompt",
     prompt
   ];
@@ -285,14 +333,22 @@ if (['task', 'bugfix'].includes(firstArg)) {
 
 // 5. Parallel Workflow Subcommand
 if (firstArg === 'parallel') {
+  if (process.env.HERDR_ENV !== '1') {
+    console.error(`\x1b[33m⚠️ 提示: 当前未处于 Herdr 复合终端环境中 (HERDR_ENV != 1)。\x1b[0m`);
+    console.error(`\x1b[36m💡 请先在当前项目目录运行 \x1b[1;37mplogr\x1b[0;36m 启动/连接 Herdr 复合终端，然后在 Herdr 窗格中派发工作流。\x1b[0m\n`);
+  }
+
   const psHost = findPowerShell();
   const matrixArg = cliArgs[1] || '[]';
+  const autoSlug = `matrix-${Date.now().toString(36)}`;
   const psArgs = [
     "-NoProfile",
     "-ExecutionPolicy",
     "Bypass",
     "-File",
     parallelScript,
+    "-Slug",
+    autoSlug,
     "-MatrixJson",
     matrixArg
   ];
@@ -302,6 +358,47 @@ if (firstArg === 'parallel') {
     windowsHide: false
   });
   child.on('exit', (code) => process.exit(code ?? 0));
+  return;
+}
+
+// 5.5. Prune Worktrees Subcommand (`plogr prune`)
+if (firstArg === 'prune') {
+  const projectRoot = process.cwd();
+  console.log(`\x1b[36m🧹 Scanning and pruning stale Git worktrees in ${projectRoot}...\x1b[0m`);
+  try {
+    const activeWorktrees = getActiveWorktrees(projectRoot);
+    const wtDir = path.join(projectRoot, '.worktrees');
+    if (fs.existsSync(wtDir)) {
+      const entries = fs.readdirSync(wtDir);
+      for (const entry of entries) {
+        const fullWtPath = path.join(wtDir, entry);
+        const normPath = path.resolve(fullWtPath).toLowerCase();
+        
+        // Protect active worktrees from deletion
+        if (activeWorktrees.has(normPath)) {
+          console.log(`\x1b[33m  🛡️ 跳过活跃沙盒 (正在执行任务): ${entry}\x1b[0m`);
+          continue;
+        }
+
+        try {
+          execSync(`git -C "${projectRoot}" worktree remove --force "${fullWtPath}"`, { stdio: 'ignore' });
+        } catch {}
+        if (fs.existsSync(fullWtPath)) {
+          try {
+            if (process.platform === 'win32') {
+              execSync(`cmd /c "rmdir /s /q \"${fullWtPath}\""`, { stdio: 'ignore' });
+            } else {
+              fs.rmSync(fullWtPath, { recursive: true, force: true });
+            }
+          } catch {}
+        }
+      }
+    }
+    execSync(`git -C "${projectRoot}" worktree prune`, { stdio: 'ignore' });
+    console.log(`\x1b[32m✨ All merged & orphaned Git worktrees have been cleanly pruned.\x1b[0m`);
+  } catch (err) {
+    console.error(`\x1b[31mFailed to prune worktrees: ${err.message}\x1b[0m`);
+  }
   return;
 }
 

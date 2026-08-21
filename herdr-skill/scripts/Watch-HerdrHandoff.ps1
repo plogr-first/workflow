@@ -3,6 +3,7 @@ param(
   [Parameter(Mandatory)][string]$AgentName,
   [Parameter(Mandatory)][string]$StatusPath,
   [string]$OutcomePath,
+  [string]$SessionName,
   [int]$StartTimeoutSeconds = 120,
   [int]$PollSeconds = 5
 )
@@ -10,15 +11,17 @@ $ErrorActionPreference = 'Stop'
 $status = Get-Content -LiteralPath $StatusPath -Raw | ConvertFrom-Json
 $resultPath = [string]$status.result_path
 if (-not $OutcomePath) { $OutcomePath = [string]$status.outcome_path }
+if (-not $SessionName -and $status.session_name) { $SessionName = [string]$status.session_name }
+$prefix = if ($SessionName) { @('--session', $SessionName) } else { @() }
 $pane = [string]$status.pane_id
 $kind = [string]$status.kind
 $deadline = (Get-Date).AddSeconds($StartTimeoutSeconds)
 $observedWork = $false
 function Notify([string]$Title,[string]$Body,[string]$Sound = 'done') {
-  & herdr notification show $Title --body $Body --sound $Sound | Out-Null
+  & herdr @prefix notification show $Title --body $Body --sound $Sound 2>$null | Out-Null
 }
 while ((Get-Date) -lt $deadline) {
-  $agent = (& herdr agent get $AgentName | ConvertFrom-Json).result.agent
+  $agent = (& herdr @prefix agent get $AgentName 2>$null | ConvertFrom-Json).result.agent
   if ($agent.agent_status -eq 'working') { $observedWork = $true }
   if ($agent.agent_status -eq 'blocked') {
     Notify "Herdr: $AgentName 需要处理" "Agent 被阻塞；请检查 $StatusPath" 'request'
@@ -37,10 +40,10 @@ if (-not $observedWork) {
 }
 $reminder = "交接检查发现你已返回但缺少完整交接。立即将完整结果写入 $resultPath，并将有效 workflow state JSON 写入 $OutcomePath，再运行 Herdr 完成通知。"
 if ($kind -eq 'opencode') {
-  & herdr pane send-text $pane $reminder
-  & herdr pane send-keys $pane enter
+  & herdr @prefix pane send-text $pane $reminder 2>$null
+  & herdr @prefix pane send-keys $pane enter 2>$null
 } else {
-  & herdr agent prompt $AgentName $reminder | Out-Null
+  & herdr @prefix agent prompt $AgentName $reminder 2>$null | Out-Null
 }
 $repairDeadline = (Get-Date).AddSeconds(90)
 while ((Get-Date) -lt $repairDeadline) {

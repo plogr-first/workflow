@@ -44,7 +44,7 @@ function Ensure-Agent($Workflow,[string]$Role,[string]$WorkflowPath) {
   $newName = "$base$suffix"
   $category=[string]$Workflow.mode; $profileName=if($Role -eq 'task'){if($category -eq 'research'){'research'}else{'task'}}else{'verification'}
   $recovery = "This is a post-reboot replacement for workflow $($Workflow.workflow_id). Read the existing handoff files: $($Workflow.task.result), $($Workflow.task.outcome), $($Workflow.verifier.result), $($Workflow.verifier.outcome), and the workflow file $WorkflowPath. Read progress.md/progress.json if present. Continue only the role '$Role' using the configured mattpocock skills. Preserve the existing worktree and scope. Write the role's result and outcome files when complete."
-  $launcher=Join-Path $PSScriptRoot 'Start-HerdrAgent.ps1'; $launchParams=@{Profile=$profileName;Name=$newName;Category=$category;Slug=([string]$Workflow.slug);Prompt=$recovery;ProjectRoot=$project}; if($Role -eq 'verification'){$launchParams.DeferActivation=$true}
+  $launcher=Join-Path $PSScriptRoot 'Start-HerdrAgent.ps1'; $launchParams=@{Profile=$profileName;Name=$newName;Category=$category;Slug=([string]$Workflow.slug);Prompt=$recovery;ProjectRoot=$project;SessionName=$session}; if($Role -eq 'verification'){$launchParams.DeferActivation=$true}
   try { $replacement=& $launcher @launchParams | ConvertFrom-Json } catch {
     $Workflow.state='blocked'; $Workflow.next_role=''; $Workflow | Add-Member -Force -NotePropertyName blocked_reason -NotePropertyValue ("replacement $Role Agent failed: " + $_.Exception.Message); Save-Workflow $Workflow $WorkflowPath; Event $WorkflowPath 'workflow_blocked' @{reason='replacement_agent_failed';role=$Role}; throw
   }

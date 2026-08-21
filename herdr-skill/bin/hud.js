@@ -44,7 +44,7 @@ function findActiveWorkflow(root) {
   for (const wfPath of allWf) {
     try {
       const data = JSON.parse(fs.readFileSync(wfPath, 'utf8'));
-      if (['executing', 'verifying', 'repairing'].includes(data.state)) {
+      if (['executing', 'candidate', 'verifying', 'repairing'].includes(data.state)) {
         return data;
       }
     } catch {}
@@ -136,6 +136,10 @@ function runLoop() {
     clearInterval(interval);
     process.stdout.write('\x1b[?25h\n'); // Restore cursor
     process.exit(0);
+  });
+
+  process.on('exit', () => {
+    process.stdout.write('\x1b[?25h\n');
   });
 }
 

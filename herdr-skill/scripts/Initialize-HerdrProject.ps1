@@ -315,8 +315,13 @@ function Get-HerdrSessions {
 function Select-HerdrSession([string]$Requested) {
   $sessions = @(Get-HerdrSessions)
   if ($Requested) {
-    if ($sessions -notcontains $Requested) { throw "Herdr session '$Requested' does not exist. Available: $($sessions -join ', ')" }
-    return $Requested
+    $cleanReq = $Requested.Trim().ToLowerInvariant()
+    if ($cleanReq -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$') { throw "Invalid session name '$Requested'." }
+    if ($sessions -notcontains $cleanReq) {
+      $null = & herdr --session $cleanReq status server 2>&1
+      if ($LASTEXITCODE -ne 0) { throw "Unable to create or open Herdr session '$cleanReq'." }
+    }
+    return $cleanReq
   }
   if ($sessions.Count -eq 1) { return $sessions[0] }
 
@@ -403,7 +408,6 @@ function Get-MattpockSkills([string]$Project) {
     'tdd'             = '3a1102800fa8b3c4e1aa3f1fa9d18d3e4749ee8b5d86a3b560bbd53218dbf858'
   }
 
-  $officialRoot = 'C:\Users\Lenovo\AppData\Local\Temp\mattpocock-skills-audit-20260818\skills\engineering'
   $roots = @(
     (Join-Path $Project '.agents\skills'),
     (Join-Path $Project '.claude\skills'),
@@ -411,15 +415,14 @@ function Get-MattpockSkills([string]$Project) {
     (Join-Path $Project '.opencode\skills'),
     (Join-Path $Project '.cursor\skills'),
     (Join-Path $Project '.gemini\skills'),
-    'F:\mattpock\.agents\skills',
-    (Join-Path $env:USERPROFILE '.agents\skills')
+    (Join-Path $env:USERPROFILE '.agents\skills'),
+    (Join-Path $env:USERPROFILE '.claude\skills')
   ) | Select-Object -Unique
 
   $names = @('research','implement','diagnosing-bugs','code-review','tdd')
   $out = [ordered]@{}
   foreach ($name in $names) {
-    $expected = Join-Path $officialRoot "$name\SKILL.md"
-    $expectedHash = if(Test-Path -LiteralPath $expected){ (Get-FileHash -LiteralPath $expected -Algorithm SHA256).Hash.ToLowerInvariant() }elseif($knownOfficialHashes.ContainsKey($name)){$knownOfficialHashes[$name]}else{$null}
+    $expectedHash = if ($knownOfficialHashes.ContainsKey($name)) { $knownOfficialHashes[$name] } else { $null }
     $candidates = @($roots | ForEach-Object { Join-Path $_ $name } | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'SKILL.md') })
     $hit = $null; $actualHash = $null
     foreach($candidate in $candidates) {
@@ -465,7 +468,7 @@ function Get-GitSetup([string]$Project, [bool]$AllowInit, [string]$RequestedPoli
   $hasCommit = ($LASTEXITCODE -eq 0)
   $branch = if ($hasCommit) { (& git -c core.quotepath=false -C $Project rev-parse --abbrev-ref HEAD 2>$null) } else { $null }
   $remotes = @((& git -c core.quotepath=false -C $Project remote 2>$null) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-  $hasGh = [bool](Get-Command -Name 'gh' -CommandType Application -ErrorAction SilentlyContinue)
+  $hasGh = [bool](Get-Command -Name 'gh' -CommandType Application,ExternalScript -ErrorAction SilentlyContinue)
   $policy = if ($RequestedPolicy) { $RequestedPolicy } else { 'manual' }
   $remote = $RequestedRemote
 
@@ -529,7 +532,7 @@ function Assert-TerminalAgent([string]$Kind, [string[]]$SupportedKinds) {
   if ($SupportedKinds -notcontains $Kind.ToLowerInvariant()) {
     throw "'$Kind' is not a Herdr-supported kind. Supported kinds: $($SupportedKinds -join ', ')"
   }
-  $command = Get-Command -Name $Kind -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  $command = Get-Command -Name $Kind -CommandType Application,ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $command) { throw "Herdr kind '$Kind' has no terminal executable named '$Kind' in PATH." }
   $executable = [string]$command.Path
   $version = @(& $executable --version 2>&1)

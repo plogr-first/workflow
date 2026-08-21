@@ -20,7 +20,7 @@ function Get-ActiveWorkflow([string]$Root, [string]$ExplicitPath) {
   foreach ($wfFile in $wfFiles) {
     try {
       $wf = Get-Content -LiteralPath $wfFile.FullName -Raw | ConvertFrom-Json
-      if ($wf.state -in @('executing', 'verifying', 'repairing')) {
+      if ($wf.state -in @('executing', 'candidate', 'verifying', 'repairing')) {
         $wf | Add-Member -Force -NotePropertyName _filePath -NotePropertyValue $wfFile.FullName
         return $wf
       }

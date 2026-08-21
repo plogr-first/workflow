@@ -11,7 +11,8 @@ param(
   [switch]$DeferActivation,
   [string]$ProjectRoot = (Get-Location).Path,
   [ValidateSet('right','down')][string]$Direction = 'right',
-  [string]$SessionName
+  [string]$SessionName,
+  [switch]$SkipAgentLaunch
 )
 $ErrorActionPreference = 'Stop'
 function Resolve-OpenCodeModel([string]$Requested) {
@@ -33,7 +34,7 @@ function Resolve-OpenCodeModel([string]$Requested) {
   return $Requested.Trim()
 }
 function Ensure-HerdrSessionRunning([string]$SessionName) {
-  if (-not $SessionName) { return }
+  if (-not $SessionName -or $SkipAgentLaunch) { return }
   $status = & herdr --session $SessionName status server 2>&1
   if ($LASTEXITCODE -ne 0 -or ($status -match 'not running')) {
     Start-Process -FilePath herdr -ArgumentList @('--session', $SessionName, 'server') -WindowStyle Hidden | Out-Null
@@ -113,6 +114,39 @@ if (Test-Path -LiteralPath $workflowReference) {
 $skillPaths = if($skillManifest){ @($skillManifest.psobject.Properties | Where-Object {$_.Value.available} | ForEach-Object { "$($_.Name): $($_.Value.path)" }) -join '; ' }else{'not recorded'}
 $gitContract = if($gitProfile -and $gitProfile.repository -and -not $gitProfile.has_commit){'Git was initialized but has no baseline commit. For task/bugfix, do not edit or claim candidate: write outcome state blocked and explain that the user must review and create the initial baseline commit first.'}else{'Git baseline status permits normal task/bugfix execution; preserve unrelated changes.'}
 $ghGuideline = "GitHub Operations: For any GitHub-related operations (creating PRs, inspecting PRs/issues, checking GitHub Actions/CI runs, or viewing diffs), always use the GitHub CLI (`gh`) tool (e.g. `gh pr create`, `gh pr checks`, `gh issue view`, `gh run list`) rather than manual browser steps or unauthenticated git commands."
+function Get-PitfallsWarnings([string]$Project, [string]$PromptText) {
+  $pitfallsFiles = @(
+    (Join-Path $Project '.agents\skills\knowledge\pitfalls.jsonl'),
+    (Join-Path $Project '.knowledge\pitfalls.jsonl'),
+    (Join-Path $env:USERPROFILE '.agents\skills\audit-suite\knowledge\pitfalls.jsonl')
+  )
+  $rules = @()
+  foreach ($pf in $pitfallsFiles) {
+    if (Test-Path -LiteralPath $pf) {
+      try {
+        $lines = Get-Content -LiteralPath $pf | Where-Object { $_ -and $_.Trim() }
+        foreach ($line in $lines) {
+          $entry = $line | ConvertFrom-Json
+          if ($entry.golden_rule) {
+            $rules += "- **[$($entry.category)]** $($entry.golden_rule) *(历史坑点: $($entry.symptom))*"
+          }
+        }
+      } catch {}
+    }
+  }
+  if ($rules.Count -gt 0) {
+    $dedup = @($rules | Select-Object -Unique | Select-Object -First 5)
+    return @"
+
+## ⚠️ 历史踩坑防护预警 (Project Pitfalls & Golden Rules)
+$($dedup -join "`n")
+"@
+  }
+  return ""
+}
+
+$pitfallsSection = Get-PitfallsWarnings $project $Prompt
+
 $roleContract = switch ($Profile) {
   'research' { @"
 You are the research agent. Use the official mattpocock `/research` skill. Follow $($workflowReference): use primary evidence, keep a decision-critical claim ledger with exact source evidence and access dates, state uncertainty and contradictory evidence, and remain read-only. A verifier audits evidence; do not claim unverified conclusions. $ghGuideline
@@ -137,7 +171,7 @@ try {
 
 ## Task
 $Prompt
-
+$pitfallsSection
 ## Workflow role contract
 $roleContract
 
@@ -157,6 +191,17 @@ Only after completing your role's required evidence, write full Markdown evidenc
 `herdr notification show "Herdr: $Name 已完成" --body "$resultPath" --sound done`
 Do not report completion only in the TUI.
 "@ | Set-Content -LiteralPath $briefPath -Encoding utf8
+
+  if ($SkipAgentLaunch) {
+    return [ordered]@{
+      name = $Name
+      handoff = $handoff
+      brief = $briefPath
+      result = $resultPath
+      outcome = $outcomePath
+    }
+  }
+
   $pane = $null
   try {
     $paneList = (Invoke-HerdrJson @('pane','list')).json

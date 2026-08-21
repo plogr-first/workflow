@@ -177,13 +177,27 @@ try {
       Prompt-Agent ([string]$workflow.verifier.name) $msg $workflow.verifier; $workflow.last_processed.task_outcome_hash=$taskHash; Save-State $workflow 'verifying' 'verification'; Append-Event 'verification_woken' @{agent=$workflow.verifier.name}; Notify "Herdr: $($workflow.verifier.name) 已唤醒验收" ([string]$workflow.verifier.result)
     } elseif ($workflow.next_role -eq 'task' -and $taskOutcome -and $taskOutcome.state -eq 'candidate' -and @('executing','repairing') -contains [string]$workflow.state) {
       Save-State $workflow 'candidate' 'verification'
-    } elseif ($verOutcome -and (Test-OutcomeEvidence $workflow 'verification' $verOutcome)) {
+    # Stream OSC terminal title to Herdr tab
+    try {
+      $oscTitle = "`e]0;🚀 [Plogr: $($workflow.state) | $($workflow.mode)/$($workflow.slug)]`a"
+      [Console]::Write($oscTitle)
+    } catch {}
+
+    if ($verOutcome -and (Test-OutcomeEvidence $workflow 'verification' $verOutcome)) {
       $reason=Test-OutcomeEvidence $workflow 'verification' $verOutcome; Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='invalid_verification_handoff';detail=$reason}; Notify "Herdr: 验收交接不完整：$reason" ([string]$workflow.verifier.result) 'request'; break
     } elseif ($workflow.next_role -eq 'verification' -and $verOutcome -and $workflow.last_processed.verifier_outcome_hash -ne $verHash) {
       $workflow.last_processed.verifier_outcome_hash=$verHash
       if (($workflow.mode -eq 'research' -and $verOutcome.state -eq 'passed') -or ($workflow.mode -ne 'research' -and $verOutcome.state -eq 'merged')) {
         if($workflow.mode -ne 'research'){ try {$push=Push-MergedWorkflow $workflow; $workflow|Add-Member -Force -NotePropertyName push_status -NotePropertyValue $push} catch {$workflow|Add-Member -Force -NotePropertyName push_status -NotePropertyValue 'failed';$workflow|Add-Member -Force -NotePropertyName push_error -NotePropertyValue $_.Exception.Message;Save-State $workflow 'merged' '';Append-Event 'push_failed' @{error=$_.Exception.Message};Notify 'Herdr: 已合并，但 git push 失败' ([string]$workflow.verifier.result) 'request';break} }
-        Save-State $workflow $verOutcome.state ''; Append-Event 'workflow_completed' @{state=$verOutcome.state;push_status=$workflow.push_status}; Notify 'Herdr: 工作流已完成' ([string]$workflow.verifier.result); break
+        Save-State $workflow $verOutcome.state ''; Append-Event 'workflow_completed' @{state=$verOutcome.state;push_status=$workflow.push_status}
+        # Trigger Pitfalls Knowledge Auto-Harvesting
+        try {
+          $pitfallsScript = Join-Path $PSScriptRoot 'Update-PitfallsKnowledge.ps1'
+          if (Test-Path -LiteralPath $pitfallsScript) {
+            & $pitfallsScript -WorkflowPath $workflowPath -ProjectRoot $workflow.project_root | Out-Null
+          }
+        } catch {}
+        Notify 'Herdr: 工作流已完成' ([string]$workflow.verifier.result); break
       }
       if ($verOutcome.state -eq 'blocked' -or $verOutcome.state -eq 'passed' -or $verOutcome.state -eq 'merged') { Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='invalid_terminal_role'}; Notify 'Herdr: 工作流被阻塞' ([string]$workflow.verifier.result) 'request'; break }
       if ($verOutcome.state -eq 'fix_required' -and ([int]$workflow.repair_round -lt [int]$workflow.max_repair_rounds)) {

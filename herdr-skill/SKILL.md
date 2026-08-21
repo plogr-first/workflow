@@ -48,7 +48,28 @@ The workflow launcher starts execution and deferred verification Agents, then th
 - API-affecting task/bugfix verification must include the API-contract gate.
 - **GitHub Operations**: All GitHub interactions (issues, PR creation, review, CI inspection, pushes) must use the GitHub CLI (`gh`) rather than manual browser steps or raw git remote pushes.
 
-Read [workflow protocol](references/workflow-protocol.md) before writing a brief or interpreting an outcome. On explicit script failure, read [troubleshooting](references/troubleshooting.md). Read [setup/runtime](references/setup-runtime.md) only for `npx plogr-workflow`, wrappers, profiles, or model selection.
+## Observability & HUD
+
+- `npx plogr-workflow status`: Instant snapshot summary of active workflows.
+- `npx plogr-workflow hud` (or `status --live`): 24-bit TrueColor ANSI glowing HUD with real-time pulsating hue animation. Ideal for embedding in a 1-line Herdr bottom pane.
+- `npx plogr-workflow popup`: Opens full-screen floating HUD modal for Herdr popup integration (`prefix+p`).
+- **Parallel Glowing HUD**: When running matrix parallel tasks, all concurrent subagents glow simultaneously, turning emerald green individually upon candidate completion before converging to the Verifier node.
+
+## Pitfalls & Golden Rules Memory
+
+- Automatically harvests architectural pitfalls and root-cause anti-patterns upon bugfix completion (`merged` state) or after repair loops (`repair_round >= 1`).
+- Persists rules to `.agents/skills/knowledge/pitfalls.jsonl` and `.knowledge/pitfalls.md`.
+- Automatically injects matching historical pitfall defense warnings into new Agent briefs before launch.
+
+## Matrix-Style Parallel Worktrees
+
+- Dispatch concurrent multi-module tasks across isolated Git Worktrees simultaneously:
+```powershell
+& '<herdr-skill-root>\scripts\Start-HerdrParallelWorkflow.ps1' `
+  -Slug <slug> -MatrixJson '[{"id":"api","scope":"src/api/**","agent":"codex","prompt":"..."},{"id":"ui","scope":"src/ui/**","agent":"claude","prompt":"..."}]'
+```
+- Each subagent operates in an independent `.worktrees/wf-<slug>-<id>` sandbox.
+- The Verification Agent integrates all candidate branches in `.worktrees/wf-<slug>-integration`, runs 5-gate acceptance, and fast-forwards `main`.
 
 ## Completion
 

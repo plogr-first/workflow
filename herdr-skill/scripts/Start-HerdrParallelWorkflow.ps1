@@ -1,0 +1,191 @@
+[CmdletBinding()]
+param(
+  [Parameter(Mandatory)][ValidatePattern('^[a-z0-9]+(-[a-z0-9]+)*$')][string]$Slug,
+  [Parameter(Mandatory)][string]$MatrixJson,
+  [string]$ProjectRoot = (Get-Location).Path,
+  [string]$SessionName,
+  [switch]$SkipAgentLaunch
+)
+
+$ErrorActionPreference = 'Stop'
+
+if ($env:HERDR_ENV -ne '1') {
+  throw "Start-HerdrParallelWorkflow requires HERDR_ENV=1. Run within a Herdr-managed project."
+}
+
+$project = (Resolve-Path -LiteralPath $ProjectRoot).Path
+$profilePath = Join-Path $project 'herdr\dispatch-profile.json'
+if (-not (Test-Path -LiteralPath $profilePath)) {
+  throw "Project dispatch profile not found at '$profilePath'. Run 'npx plogr-workflow' first."
+}
+
+$profile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json
+$boundSession = if ($profile.herdr_session) { $profile.herdr_session } else { 'default' }
+$targetSession = if ($SessionName) { $SessionName } else { $boundSession }
+if ($targetSession -ne $boundSession) {
+  throw "Session mismatch: Project is bound to Herdr session '$boundSession', but '$targetSession' was requested."
+}
+
+$matrix = $MatrixJson | ConvertFrom-Json
+if (-not $matrix -or $matrix.Count -lt 1) {
+  throw "Matrix must contain at least 1 parallel task definition."
+}
+
+# Verify Git baseline
+$isGit = (& git -C $project rev-parse --is-inside-work-tree 2>&1)
+if ($isGit.Trim() -ne 'true') {
+  throw "Project at '$project' is not a valid Git repository."
+}
+$headCommit = (& git -C $project rev-parse --verify HEAD 2>&1)
+if ($LASTEXITCODE -ne 0) {
+  throw "Git repository has no initial baseline commit."
+}
+
+$dateStr = Get-Date -Format 'yyyy-MM-dd'
+$timeStr = Get-Date -Format 'HHmmss'
+$wfId = "wf-$Slug-$timeStr"
+$wfDir = Join-Path $project "herdr\parallel\$dateStr\$timeStr--workflow--$Slug"
+New-Item -ItemType Directory -Force -Path $wfDir | Out-Null
+
+$eventsPath = Join-Path $wfDir 'events.jsonl'
+$wfPath = Join-Path $wfDir 'workflow.json'
+
+function Append-Event([string]$EvName, [hashtable]$Payload) {
+  $entry = [ordered]@{
+    at = (Get-Date -Format o)
+    event = $EvName
+    workflow_id = $wfId
+  }
+  foreach ($k in $Payload.Keys) { $entry[$k] = $Payload[$k] }
+  ($entry | ConvertTo-Json -Compress) | Add-Content -LiteralPath $eventsPath -Encoding utf8
+}
+
+Append-Event 'parallel_workflow_created' @{ slug = $Slug; matrix_count = $matrix.Count }
+
+$matrixItems = [System.Collections.Generic.List[PSCustomObject]]::new()
+$worktreeBase = Join-Path $project '.worktrees'
+if (-not (Test-Path -LiteralPath $worktreeBase)) {
+  New-Item -ItemType Directory -Force -Path $worktreeBase | Out-Null
+}
+
+$agentScript = Join-Path $PSScriptRoot 'Start-HerdrAgent.ps1'
+
+# 1. Mount all parallel Worktrees and launch Agents concurrently
+foreach ($sub in $matrix) {
+  $subId = [string]$sub.id
+  $subSlug = "$Slug-$subId"
+  $subAgentKind = if ($sub.agent) { [string]$sub.agent } else { [string]$profile.task.agent }
+  $subPrompt = [string]$sub.prompt
+  $subScope = if ($sub.scope) { [string]$sub.scope } else { '**/*' }
+
+  $wtDir = Join-Path $worktreeBase "wf-$subSlug"
+  $branchName = "wf/$Slug/$subId"
+
+  # Clean old worktree/branch if exists
+  if (Test-Path -LiteralPath $wtDir) {
+    & git -C $project worktree remove --force $wtDir 2>&1 | Out-Null
+  }
+  & git -C $project branch -D $branchName 2>&1 | Out-Null
+
+  # Create branch and isolated worktree
+  & git -C $project worktree add -b $branchName $wtDir HEAD 2>&1 | Out-Null
+
+  $subHandoff = Join-Path $wfDir "sub-$subId"
+  New-Item -ItemType Directory -Force -Path $subHandoff | Out-Null
+
+  $subResult = Join-Path $subHandoff 'task-result.md'
+  $subOutcome = Join-Path $subHandoff 'task-outcome.json'
+  $subBrief = Join-Path $subHandoff 'task-brief.md'
+
+  # Launch agent in its own isolated worktree
+  $agentName = "wf-$subSlug-$subAgentKind"
+  $fullPrompt = @"
+[PARALLEL SUBTASK: $subId]
+Scope: $subScope
+Prompt: $subPrompt
+
+Worktree Path: $wtDir
+Candidate Branch: $branchName
+"@
+
+  $subItem = [ordered]@{
+    id = $subId
+    slug = $subSlug
+    agent = $subAgentKind
+    agent_name = $agentName
+    scope = $subScope
+    worktree_path = $wtDir
+    branch = $branchName
+    handoff = $subHandoff
+    result = $subResult
+    outcome = $subOutcome
+    brief = $subBrief
+    status = 'executing'
+  }
+  $matrixItems.Add([pscustomobject]$subItem)
+
+  Append-Event 'subtask_dispatched' @{ subtask_id = $subId; branch = $branchName; worktree = $wtDir; agent = $subAgentKind }
+
+  if (-not $SkipAgentLaunch) {
+    try {
+      & $agentScript `
+        -Name $agentName `
+        -Profile 'task' `
+        -Category 'task' `
+        -Prompt $fullPrompt `
+        -ProjectRoot $wtDir `
+        -HandoffDirectory $subHandoff `
+        -SessionName $targetSession 2>&1 | Out-Null
+    } catch {
+      Write-Host "  ⚠️ Parallel agent launch deferred/spawned in background: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+  } else {
+    # Generate brief without pane launch
+    $subBriefContent = @"
+# Brief: $agentName
+- Scope: $subScope
+- Worktree: $wtDir
+- Branch: $branchName
+$fullPrompt
+"@
+    Set-Content -LiteralPath $subBrief -Value $subBriefContent -Encoding utf8
+  }
+}
+
+# 2. Prepare Master Workflow JSON
+$masterWf = [ordered]@{
+  schema_version = 3
+  workflow_id = $wfId
+  mode = 'parallel_task'
+  slug = $Slug
+  session_name = $targetSession
+  project_root = $project
+  state = 'executing'
+  next_role = 'matrix_tasks'
+  repair_round = 0
+  max_repair_rounds = 2
+  created_at = (Get-Date -Format o)
+  updated_at = (Get-Date -Format o)
+  matrix = $matrixItems
+  git = $profile.git
+  verifier = [ordered]@{
+    name = "wf-verify-$Slug-$($profile.verification.agent)"
+    original_agent_name = "wf-verify-$Slug-$($profile.verification.agent)"
+    active_agent_name = "wf-verify-$Slug-$($profile.verification.agent)"
+    handoff = (Join-Path $wfDir 'verifier')
+    brief = (Join-Path $wfDir 'verifier\verifier-brief.md')
+    result = (Join-Path $wfDir 'verifier\verify-result.md')
+    outcome = (Join-Path $wfDir 'verifier\verify-outcome.json')
+  }
+}
+
+$masterWf | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $wfPath -Encoding utf8
+
+Write-Host "`n╔═════════════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+Write-Host "║  🚀 PLOGR MATRIX PARALLEL WORKFLOW DISPATCHED                           ║" -ForegroundColor Cyan
+Write-Host "║  Master Workflow : $wfId" -ForegroundColor DarkCyan
+Write-Host "║  Parallel Matrix : $($matrix.Count) Sub-Worktrees Mounted" -ForegroundColor DarkCyan
+Write-Host "║  Session Name    : $targetSession" -ForegroundColor DarkCyan
+Write-Host "╚═════════════════════════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
+
+return $wfPath

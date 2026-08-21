@@ -98,6 +98,23 @@ const psArgs = [
 ];
 
 const cliArgs = process.argv.slice(2);
+
+// ── Route Subcommands (status, hud, popup) ────────────────────────
+const firstArg = cliArgs[0];
+if (['status', 'hud', 'popup'].includes(firstArg)) {
+  const hudScript = path.join(__dirname, 'hud.js');
+  const hudArgs = [hudScript, ...cliArgs.slice(1)];
+  if (firstArg === 'hud' && !hudArgs.includes('--live')) hudArgs.push('--live');
+  if (firstArg === 'popup' && !hudArgs.includes('--popup')) hudArgs.push('--popup');
+  
+  const child = spawn(process.execPath, hudArgs, {
+    stdio: 'inherit',
+    windowsHide: false
+  });
+  child.on('exit', (code) => process.exit(code ?? 0));
+  return;
+}
+
 let i = 0;
 while (i < cliArgs.length) {
   const arg = cliArgs[i];

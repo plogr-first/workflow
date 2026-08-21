@@ -198,41 +198,111 @@ function Get-SupportedKinds {
 }
 
 function Get-OpenCodeModels {
-  $defaultModels = @(
-    'opencode/deepseek-v4-flash-free',
-    'opencode-go/deepseek-v4-flash',
-    'opencode/claude-3-7-sonnet',
-    'opencode/claude-3-5-sonnet',
-    'opencode/gpt-4o'
+  $models = [System.Collections.Generic.List[string]]::new()
+
+  # 1. Dynamically read custom models from ~/.config/opencode/opencode.jsonc and opencode.json
+  $configPaths = @(
+    (Join-Path $env:USERPROFILE '.config\opencode\opencode.jsonc'),
+    (Join-Path $env:USERPROFILE '.config\opencode\opencode.json'),
+    (Join-Path $env:APPDATA 'opencode\opencode.json')
   )
-  try {
-    $models = @((& opencode models 2>$null) -replace "`e\[[0-9;]*m", '' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    if ($models -and $models.Count -gt 0) { return $models }
-  } catch {}
-  return $defaultModels
+
+  foreach ($cfg in $configPaths) {
+    if (Test-Path -LiteralPath $cfg) {
+      try {
+        $raw = Get-Content -LiteralPath $cfg -Raw
+        $cleanJson = $raw -replace '(?m)^\s*//.*$', ''
+        $data = $cleanJson | ConvertFrom-Json
+        if ($data.provider) {
+          foreach ($provProp in $data.provider.psobject.Properties) {
+            $provName = $provProp.Name
+            $provVal = $provProp.Value
+            if ($provVal.models) {
+              foreach ($mProp in $provVal.models.psobject.Properties) {
+                $mName = $mProp.Name
+                $fullModelId = "${provName}/${mName}"
+                if (-not $models.Contains($fullModelId)) {
+                  $models.Add($fullModelId)
+                }
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+
+  # 2. Add mainstream standard official models
+  $standardModels = @(
+    'anthropic/claude-3-7-sonnet',
+    'anthropic/claude-3-5-sonnet',
+    'deepseek/deepseek-reasoner',
+    'deepseek/deepseek-chat',
+    'openai/o3-mini',
+    'openai/o1',
+    'openai/gpt-4o',
+    'google/gemini-2.5-pro',
+    'google/gemini-2.0-flash'
+  )
+
+  foreach ($sm in $standardModels) {
+    if (-not $models.Contains($sm)) {
+      $models.Add($sm)
+    }
+  }
+
+  return @($models)
 }
 
 function Resolve-OpenCodeModel([string]$Requested, [string[]]$Models) {
-  $aliases = @{ 'zen'='opencode/deepseek-v4-flash-free'; 'zen-free'='opencode/deepseek-v4-flash-free'; 'deepseek-v4-flash-free'='opencode/deepseek-v4-flash-free'; 'go'='opencode-go/deepseek-v4-flash'; 'go-flash'='opencode-go/deepseek-v4-flash'; 'deepseek-v4-flash'='opencode-go/deepseek-v4-flash' }
+  $aliases = @{
+    'claude-3-7'='anthropic/claude-3-7-sonnet'; 'claude-3-7-sonnet'='anthropic/claude-3-7-sonnet'; 'sonnet-3.7'='anthropic/claude-3-7-sonnet'
+    'claude-3-5'='anthropic/claude-3-5-sonnet'; 'claude-3-5-sonnet'='anthropic/claude-3-5-sonnet'; 'sonnet-3.5'='anthropic/claude-3-5-sonnet'
+    'r1'='deepseek/deepseek-reasoner'; 'reasoner'='deepseek/deepseek-reasoner'; 'deepseek-r1'='deepseek/deepseek-reasoner'
+    'deepseek'='deepseek/deepseek-chat'; 'deepseek-v3'='deepseek/deepseek-chat'; 'chat'='deepseek/deepseek-chat'
+    'o3-mini'='openai/o3-mini'; 'o3'='openai/o3-mini'
+    'o1'='openai/o1'; 'o1-preview'='openai/o1'
+    'gpt-4o'='openai/gpt-4o'; '4o'='openai/gpt-4o'
+    'gemini-pro'='google/gemini-2.5-pro'; 'gemini-2.5-pro'='google/gemini-2.5-pro'
+    'gemini-flash'='google/gemini-2.0-flash'; 'gemini-2.0-flash'='google/gemini-2.0-flash'
+    'sol'='pixel/gpt-5.6-sol'; 'terra'='pixel/gpt-5.6-Terra'; 'luna'='pixel/gpt-5.6-Luna'
+  }
   $key = $Requested.Trim().ToLowerInvariant(); if($aliases.ContainsKey($key)){$key=$aliases[$key]}
   $exact=@($Models|Where-Object{$_.Equals($key,[StringComparison]::OrdinalIgnoreCase)}); if($exact.Count -eq 1){return $exact[0]}
   $normal=$key -replace '[^a-z0-9]',''; $fuzzy=@($Models|Where-Object{(($_ -replace '[^a-z0-9]','').ToLowerInvariant()).Contains($normal)})
-  if($fuzzy.Count -eq 1){return $fuzzy[0]}; if($fuzzy.Count -gt 1){throw "OpenCode model '$Requested' is ambiguous: $($fuzzy -join ', ')"}; throw "OpenCode model '$Requested' is not currently available."
+  if($fuzzy.Count -eq 1){return $fuzzy[0]}; if($fuzzy.Count -gt 1){throw "OpenCode model '$Requested' is ambiguous: $($fuzzy -join ', ')"}; return $Requested.Trim()
 }
 
 function Select-OpenCodeModelInteractive([string]$Role, [string[]]$Models) {
   $chineseMap = @{
-    'opencode/deepseek-v4-flash-free' = 'DeepSeek V4 Flash 免费推理模型 (推荐)'
-    'opencode-go/deepseek-v4-flash'    = 'DeepSeek V4 Flash 高速模型'
-    'opencode/claude-3-7-sonnet'       = 'Claude 3.7 Sonnet 强力思考模型'
-    'opencode/claude-3-5-sonnet'       = 'Claude 3.5 Sonnet 模型'
-    'opencode/gpt-4o'                  = 'OpenAI GPT-4o 模型'
+    'anthropic/claude-3-7-sonnet' = 'Claude 3.7 Sonnet (思考模式: Max 推荐)'
+    'anthropic/claude-3-5-sonnet' = 'Claude 3.5 Sonnet'
+    'deepseek/deepseek-reasoner'  = 'DeepSeek R1 / Reasoner (思考模式: Max 强推理)'
+    'deepseek/deepseek-chat'      = 'DeepSeek V3 / Chat 高速代码模型'
+    'openai/o3-mini'              = 'OpenAI o3-mini (思考模式: Max 编程推理)'
+    'openai/o1'                   = 'OpenAI o1 (思考模式: Max 复杂规划)'
+    'openai/gpt-4o'               = 'OpenAI GPT-4o 多模态旗舰模型'
+    'google/gemini-2.5-pro'       = 'Gemini 2.5 Pro (思考模式: Max 极长上下文)'
+    'google/gemini-2.0-flash'     = 'Gemini 2.0 Flash 极速响应模型'
+    'pixel/gpt-5.6-sol'           = 'Pixel / GPT-5.6 Sol (用户自定义 Provider)'
+    'pixel/gpt-5.6-Terra'         = 'Pixel / GPT-5.6 Terra (用户自定义 Provider)'
+    'pixel/gpt-5.6-Luna'          = 'Pixel / GPT-5.6 Luna (用户自定义 Provider)'
   }
-  $options = @($Models | ForEach-Object {
-    $desc = if ($chineseMap.ContainsKey($_)) { $chineseMap[$_] } else { '通用 LLM 模型' }
-    @{ Label = "$_  ($desc)"; Value = $_ }
-  })
-  return Select-InteractiveMenu -Title "配置 OpenCode 模型 ($Role)" -Subtitle "请选择此 Agent 节点底层的 LLM 大语言模型" -Options $options
+  $options = @()
+  foreach ($m in $Models) {
+    $desc = if ($chineseMap.ContainsKey($m)) { $chineseMap[$m] } elseif ($m -match '^pixel/') { "Pixel 自定义模型" } else { "OpenCode 兼容模型" }
+    $options += @{ Label = "$m  ($desc)"; Value = $m }
+  }
+  $options += @{ Label = "[+] 手动输入其他 OpenCode 模型 ID (provider/model-name)"; Value = '__CUSTOM__' }
+
+  $chosen = Select-InteractiveMenu -Title "配置 OpenCode 模型 ($Role)" -Subtitle "请选择此 Agent 节点底层的 LLM 大语言模型 (默认思考模式: Max)" -Options $options
+  if ($chosen -eq '__CUSTOM__') {
+    Write-Host "请输入 OpenCode 模型标识符 (例如 anthropic/claude-3-7-sonnet 或 provider/model):" -ForegroundColor Cyan
+    $customModel = (Read-Host "模型 ID").Trim()
+    if (-not $customModel) { throw "OpenCode 模型 ID 不能为空。" }
+    return $customModel
+  }
+  return $chosen
 }
 
 function Get-HerdrSessions {

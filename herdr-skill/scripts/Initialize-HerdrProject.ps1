@@ -221,8 +221,18 @@ function Resolve-OpenCodeModel([string]$Requested, [string[]]$Models) {
 }
 
 function Select-OpenCodeModelInteractive([string]$Role, [string[]]$Models) {
-  $options = @($Models | ForEach-Object { @{ Label = $_; Value = $_ } })
-  return Select-InteractiveMenu -Title "Select OpenCode Model for $Role" -Subtitle "Choose the LLM backend for this agent" -Options $options
+  $chineseMap = @{
+    'opencode/deepseek-v4-flash-free' = 'DeepSeek V4 Flash 免费推理模型 (推荐)'
+    'opencode-go/deepseek-v4-flash'    = 'DeepSeek V4 Flash 高速模型'
+    'opencode/claude-3-7-sonnet'       = 'Claude 3.7 Sonnet 强力思考模型'
+    'opencode/claude-3-5-sonnet'       = 'Claude 3.5 Sonnet 模型'
+    'opencode/gpt-4o'                  = 'OpenAI GPT-4o 模型'
+  }
+  $options = @($Models | ForEach-Object {
+    $desc = if ($chineseMap.ContainsKey($_)) { $chineseMap[$_] } else { '通用 LLM 模型' }
+    @{ Label = "$_  ($desc)"; Value = $_ }
+  })
+  return Select-InteractiveMenu -Title "配置 OpenCode 模型 ($Role)" -Subtitle "请选择此 Agent 节点底层的 LLM 大语言模型" -Options $options
 }
 
 function Get-HerdrSessions {
@@ -242,14 +252,14 @@ function Select-HerdrSession([string]$Requested) {
 
   $options = @()
   foreach ($s in $sessions) {
-    $options += @{ Label = "Use existing session: $s"; Value = $s }
+    $options += @{ Label = "使用已有 Session: $s (在现有隔离会话中运行)"; Value = $s }
   }
-  $options += @{ Label = "[+] Create a new named session"; Value = '__NEW__' }
+  $options += @{ Label = "[+] 创建新的命名 Session (新建独立会话，杜绝多任务碰撞)"; Value = '__NEW__' }
 
-  $choice = Select-InteractiveMenu -Title "Select Herdr Persistent Session" -Subtitle "All workflows for this project will run isolated in this session" -Options $options
+  $choice = Select-InteractiveMenu -Title "选择 Herdr 持久化 Session (会话物理隔离)" -Subtitle "本项目的所有多 Agent 工作流将在该独立隔离 Session 中安全运行" -Options $options
   if ($choice -eq '__NEW__') {
-    Write-Host "Enter new Herdr session name (e.g. dev, project-flow):" -ForegroundColor Cyan
-    $newName = (Read-Host "Session Name").Trim().ToLowerInvariant()
+    Write-Host "请输入新的 Herdr Session 名称 (例如 dev, project-flow):" -ForegroundColor Cyan
+    $newName = (Read-Host "Session 名称").Trim().ToLowerInvariant()
     if ($newName -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$') { throw "Invalid session name '$newName'." }
     if ($sessions -notcontains $newName) {
       $null = & herdr --session $newName status server 2>&1
@@ -406,15 +416,15 @@ function Get-GitSetup([string]$Project, [bool]$AllowInit, [string]$RequestedPoli
 
   if (-not $RequestedPolicy -and $Interactive -and $remotes.Count -gt 0) {
     $options = @()
-    $options += @{ Label = "Keep merges local (manual push / no auto-push)"; Value = 'manual' }
+    $options += @{ Label = "manual      - 手动提交 (验证通过后仅保存在本地 Git 仓库，由人工手动 Push) [推荐]"; Value = 'manual' }
     foreach ($r in $remotes) {
-      $options += @{ Label = "Push after merge to $r (using git/gh)"; Value = "push:$r" }
+      $options += @{ Label = "push:$r     - 自动 Git Push (验证通过后自动推送到远程仓库 $r)"; Value = "push:$r" }
     }
     if ($githubInfo.is_github -and $hasGh) {
-      $options += @{ Label = "Create GitHub Pull Request via gh CLI automatically"; Value = 'create_pr' }
+      $options += @{ Label = "create_pr   - 自动创建 PR (验证通过后通过 GitHub CLI 自动提交 Pull Request)"; Value = 'create_pr' }
     }
 
-    $chosen = Select-InteractiveMenu -Title "Select Post-Merge Submission Policy" -Subtitle "How should Herdr handle code after independent verification passes?" -Options $options
+    $chosen = Select-InteractiveMenu -Title "选择代码验证通过后的提交/推送策略 (Push Policy)" -Subtitle "当代码完成独立验收且通过测试后，Herdr 应如何处理 Git 提交？" -Options $options
     if ($chosen -eq 'manual') {
       $policy = 'manual'
       $remote = $null
@@ -479,16 +489,16 @@ function Select-Agent([string]$RoleTitle, [string]$RoleKey, [string]$RequestedKi
   $interactive = [string]::IsNullOrWhiteSpace($RequestedKind)
   if ($interactive) {
     $options = @(
-      @{ Label = "claude   - Anthropic Claude Code CLI (Recommended for research/audit)"; Value = 'claude' },
-      @{ Label = "codex    - OpenAI Codex CLI (Recommended for verification)"; Value = 'codex' },
-      @{ Label = "opencode - OpenCode Full-Screen TUI / DeepSeek Models"; Value = 'opencode' },
-      @{ Label = "gemini   - Google Gemini CLI"; Value = 'gemini' },
-      @{ Label = "custom   - Custom command executable (User defined in PowerShell)"; Value = 'custom' }
+      @{ Label = "claude   - Anthropic Claude Code CLI (推荐用于 根因分析/复盘与复杂编码)"; Value = 'claude' },
+      @{ Label = "codex    - OpenAI Codex CLI (推荐用于 任务开发与自动化代码验收)"; Value = 'codex' },
+      @{ Label = "opencode - OpenCode 终端全屏 TUI (支持 DeepSeek-V4 / Claude / GPT 模型)"; Value = 'opencode' },
+      @{ Label = "gemini   - Google Gemini CLI (谷歌 Gemini 终端工具)"; Value = 'gemini' },
+      @{ Label = "custom   - 自定义命令 / 脚本 (自定义 PowerShell 可执行程序)"; Value = 'custom' }
     )
-    $chosen = Select-InteractiveMenu -Title "Configure $RoleTitle ($RoleKey)" -Subtitle "Select the AI Agent engine for this specific workflow node" -Options $options
+    $chosen = Select-InteractiveMenu -Title "配置 $RoleTitle ($RoleKey)" -Subtitle "请选择该工作流节点所使用的 AI Agent 引擎" -Options $options
     if ($chosen -eq 'custom') {
-      Write-Host "Enter custom executable or PowerShell command for ${RoleTitle}:" -ForegroundColor Cyan
-      $cmd = (Read-Host "Command").Trim()
+      Write-Host "请输入用于 $RoleTitle 的自定义可执行文件或 PowerShell 命令:" -ForegroundColor Cyan
+      $cmd = (Read-Host "自定义命令").Trim()
       if (-not $cmd) { throw "Custom command for $RoleTitle cannot be empty." }
       $RequestedKind = $cmd
     } else {
@@ -531,24 +541,24 @@ $git = Get-GitSetup $project (-not $SkipGitInit) $PushPolicy $PushRemote $intera
 $session = Select-HerdrSession $HerdrSessionName
 $supportedKinds = Get-SupportedKinds
 
-$rootCause = Select-Agent 'Root-Cause & Audit Agent' 'root_cause' $RootCauseKind $RootCauseOpenCodeModel $RootCauseFullAccessArgs $RootCauseCommand $supportedKinds
-$task = Select-Agent 'Task & Implementation Agent' 'task' $TaskKind $TaskOpenCodeModel $TaskFullAccessArgs $TaskCommand $supportedKinds
-$verification = Select-Agent 'Verification & Integration Agent' 'verification' $VerificationKind $VerificationOpenCodeModel $VerificationFullAccessArgs $VerificationCommand $supportedKinds
-$research = Select-Agent 'Deep Research Agent' 'research' $ResearchKind $ResearchOpenCodeModel $ResearchFullAccessArgs $ResearchCommand $supportedKinds
+$rootCause = Select-Agent '根因分析与审查 Agent (Root-Cause & Audit)' 'root_cause' $RootCauseKind $RootCauseOpenCodeModel $RootCauseFullAccessArgs $RootCauseCommand $supportedKinds
+$task = Select-Agent '任务开发与实现 Agent (Task & Implementation)' 'task' $TaskKind $TaskOpenCodeModel $TaskFullAccessArgs $TaskCommand $supportedKinds
+$verification = Select-Agent '代码验收与合并 Agent (Verification & Integration)' 'verification' $VerificationKind $VerificationOpenCodeModel $VerificationFullAccessArgs $VerificationCommand $supportedKinds
+$research = Select-Agent '深度调研与探索 Agent (Deep Research)' 'research' $ResearchKind $ResearchOpenCodeModel $ResearchFullAccessArgs $ResearchCommand $supportedKinds
 
 # Interactive Skill Target Agents Selection
 $configuredAgents = @($rootCause.kind, $task.kind, $verification.kind, $research.kind) | Select-Object -Unique
 $targetAgents = $SkillTargetAgents
 if (-not $targetAgents -and $interactiveSetup) {
   $skillOptions = @(
-    @{ Label = "Install for all configured workflow agents ($($configuredAgents -join ', ')) [Recommended]"; Value = 'configured' },
-    @{ Label = "Install for ALL supported agent tools (* - Claude, Codex, OpenCode, Cursor, Gemini)"; Value = 'all' },
-    @{ Label = "Claude Code only (claude-code)"; Value = 'claude-code' },
-    @{ Label = "Codex only (codex)"; Value = 'codex' },
-    @{ Label = "OpenCode only (opencode)"; Value = 'opencode' },
-    @{ Label = "Universal .agents directory only (.agents/skills)"; Value = 'agents_only' }
+    @{ Label = "推荐: 仅安装至当前配置的 Workflow Agents ($($configuredAgents -join ', '))"; Value = 'configured' },
+    @{ Label = "全量: 安装至所有支持的 Agent 工具 (* - Claude, Codex, OpenCode, Cursor, Gemini)"; Value = 'all' },
+    @{ Label = "仅 Claude Code (.claude/skills)"; Value = 'claude-code' },
+    @{ Label = "仅 OpenAI Codex (.codex/skills)"; Value = 'codex' },
+    @{ Label = "仅 OpenCode (.opencode/skills)"; Value = 'opencode' },
+    @{ Label = "仅 Universal 通用目录 (.agents/skills)"; Value = 'agents_only' }
   )
-  $chosenSkillTarget = Select-InteractiveMenu -Title "Select Target Agents for Project Skill Installation" -Subtitle "Which agent tool directories should Matt Pocock & Audit-Suite skills be installed to?" -Options $skillOptions
+  $chosenSkillTarget = Select-InteractiveMenu -Title "选择项目 Skill 技能部署的目标 Agent" -Subtitle "决定将 Matt Pocock 官方工程技能与 Audit-Suite 审判技能安装到哪些 Agent 目录" -Options $skillOptions
   $targetAgents = switch ($chosenSkillTarget) {
     'configured' { $configuredAgents }
     'all' { @('*') }

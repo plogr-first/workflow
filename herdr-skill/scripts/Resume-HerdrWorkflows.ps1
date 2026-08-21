@@ -11,7 +11,7 @@ if ($FromBash) { $env:HERDR_ENV='1' }
 if ($env:HERDR_ENV -ne '1') { throw 'HERDR_ENV is not 1. Run herdr resume from a Herdr-managed pane.' }
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $profilePath = Join-Path $project 'herdr\dispatch-profile.json'
-if (-not (Test-Path $profilePath)) { throw "Herdr dispatch profile not found: $profilePath. Run 'npx plogr-workflow' first." }
+if (-not (Test-Path -LiteralPath $profilePath)) { throw "Herdr dispatch profile not found: $profilePath. Run 'npx plogr-workflow' first." }
 $profile = Get-Content $profilePath -Raw | ConvertFrom-Json
 $boundSession = [string]$profile.herdr_session.name
 if ($SessionName -and $SessionName -ne $boundSession) { throw "Project is bound to Herdr session '$boundSession', not '$SessionName'." }
@@ -48,8 +48,12 @@ function Ensure-Agent($Workflow,[string]$Role,[string]$WorkflowPath) {
   try { $replacement=& $launcher @launchParams | ConvertFrom-Json } catch {
     $Workflow.state='blocked'; $Workflow.next_role=''; $Workflow | Add-Member -Force -NotePropertyName blocked_reason -NotePropertyValue ("replacement $Role Agent failed: " + $_.Exception.Message); Save-Workflow $Workflow $WorkflowPath; Event $WorkflowPath 'workflow_blocked' @{reason='replacement_agent_failed';role=$Role}; throw
   }
-  if(-not $replacement.name){throw "Failed to start replacement $Role Agent '$newName'."}
-  $entry.name=$replacement.name; $entry.active_agent_name=$replacement.name; $entry.pane_id=$replacement.pane_id; $entry.handoff=$replacement.handoff; $entry.brief=$replacement.brief; $entry.result=$replacement.result; $entry.outcome=$replacement.outcome; $entry.progress=$replacement.progress; $entry.status=$replacement.status
+  $entry.name = $replacement.name
+  if ($entry.psobject.Properties['active_agent_name']) { $entry.active_agent_name = $replacement.name } else { $entry | Add-Member -Force -NotePropertyName active_agent_name -NotePropertyValue $replacement.name }
+  foreach ($prop in @('pane_id','handoff','brief','result','outcome','progress','status')) {
+    $val = $replacement.$prop
+    if ($entry.psobject.Properties[$prop]) { $entry.$prop = $val } else { $entry | Add-Member -Force -NotePropertyName $prop -NotePropertyValue $val }
+  }
   if($Role -eq 'task'){$Workflow.task=$entry}else{$Workflow.verifier=$entry}; Save-Workflow $Workflow $WorkflowPath; Event $WorkflowPath 'agent_restarted_after_reboot' @{role=$Role;agent=$replacement.name;attempt=$Workflow.recovery_attempts.$Role}
 }
 foreach($wf in $items) {

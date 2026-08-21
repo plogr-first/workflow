@@ -207,6 +207,13 @@ installGlobalPlogr();
 const cliArgs = process.argv.slice(2);
 const firstArg = cliArgs[0] ? cliArgs[0].toLowerCase() : null;
 
+// Determine if CLI was invoked as `plogr-workflow` (e.g. `npx plogr-workflow`) vs `plogr`
+const scriptBase = path.basename(process.argv[1] || "", path.extname(process.argv[1] || "")).toLowerCase();
+const isWorkflowInvoked = scriptBase.includes("plogr-workflow") || 
+  process.env.npm_lifecycle_event === "plogr-workflow" || 
+  process.env.npm_package_name === "plogr-workflow" ||
+  (Boolean(process.env._) && process.env._.includes("plogr-workflow"));
+
 // 1. Help
 if (['help', '--help', '-h'].includes(firstArg)) {
   showHelp();
@@ -227,35 +234,64 @@ if (['status', 'hud', 'popup'].includes(firstArg)) {
   return;
 }
 
-// 3. Launch / Attach Herdr Composite Terminal (Default `plogr` with no args or `plogr attach`)
-if (!firstArg || firstArg === 'attach') {
-  const herdrBin = findHerdr();
-  const profile = getProjectProfile();
-  const boundSession = profile?.herdr_session?.name || (typeof profile?.herdr_session === 'string' ? profile.herdr_session : null);
-  const targetSession = (firstArg === 'attach' && cliArgs[1]) ? cliArgs[1] : boundSession;
-
-  const herdrArgs = [];
-  if (targetSession) {
-    herdrArgs.push('--session', targetSession);
+// 3. Workflow Task / Bugfix / Research Subcommands
+if (['task', 'bugfix', 'research'].includes(firstArg)) {
+  if (process.env.HERDR_ENV !== '1') {
+    console.error(`\x1b[33m⚠️ 提示: 当前未处于 Herdr 复合终端环境中 (HERDR_ENV != 1)。\x1b[0m`);
+    console.error(`\x1b[36m💡 请先在当前项目目录运行 \x1b[1;37mplogr\x1b[0;36m 启动/连接 Herdr 复合终端，然后在 Herdr 窗格中派发工作流。\x1b[0m\n`);
   }
 
-  // If in attach mode, use `session attach`
-  if (firstArg === 'attach' && targetSession) {
-    herdrArgs.length = 0;
-    herdrArgs.push('session', 'attach', targetSession);
-  }
+  const psHost = findPowerShell();
+  const prompt = cliArgs.slice(1).join(" ") || "General task execution";
+  const autoSlug = (cliArgs[1] || firstArg).toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 16).replace(/^-|-$/g, "") || `${firstArg}-${Date.now().toString(36)}`;
+  const psArgs = [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    workflowScript,
+    "-Mode",
+    firstArg,
+    "-Slug",
+    autoSlug,
+    "-Prompt",
+    prompt
+  ];
 
-  const child = spawn(herdrBin, herdrArgs, {
+  const child = spawn(psHost, psArgs, {
     stdio: 'inherit',
     windowsHide: false
   });
+  child.on('exit', (code) => process.exit(code ?? 0));
+  return;
+}
 
-  child.on('error', (err) => {
-    console.error(`\x1b[31m✗ 无法启动 Herdr 复合终端 (${herdrBin}): ${err.message}\x1b[0m`);
-    console.error(`\x1b[33m💡 请确保已安装 Herdr: powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"\x1b[0m`);
-    process.exit(1);
+// 4. Parallel Workflow Subcommand
+if (firstArg === 'parallel') {
+  if (process.env.HERDR_ENV !== '1') {
+    console.error(`\x1b[33m⚠️ 提示: 当前未处于 Herdr 复合终端环境中 (HERDR_ENV != 1)。\x1b[0m`);
+    console.error(`\x1b[36m💡 请先在当前项目目录运行 \x1b[1;37mplogr\x1b[0;36m 启动/连接 Herdr 复合终端，然后在 Herdr 窗格中派发工作流。\x1b[0m\n`);
+  }
+
+  const psHost = findPowerShell();
+  const matrixArg = cliArgs[1] || '[]';
+  const autoSlug = `matrix-${Date.now().toString(36)}`;
+  const psArgs = [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    parallelScript,
+    "-Slug",
+    autoSlug,
+    "-MatrixJson",
+    matrixArg
+  ];
+
+  const child = spawn(psHost, psArgs, {
+    stdio: 'inherit',
+    windowsHide: false
   });
-
   child.on('exit', (code) => process.exit(code ?? 0));
   return;
 }
@@ -299,69 +335,7 @@ function getActiveWorktrees(projectRoot) {
   return active;
 }
 
-// 4. Workflow Task / Bugfix / Research Subcommands
-if (['task', 'bugfix', 'research'].includes(firstArg)) {
-  if (process.env.HERDR_ENV !== '1') {
-    console.error(`\x1b[33m⚠️ 提示: 当前未处于 Herdr 复合终端环境中 (HERDR_ENV != 1)。\x1b[0m`);
-    console.error(`\x1b[36m💡 请先在当前项目目录运行 \x1b[1;37mplogr\x1b[0;36m 启动/连接 Herdr 复合终端，然后在 Herdr 窗格中派发工作流。\x1b[0m\n`);
-  }
-
-  const psHost = findPowerShell();
-  const prompt = cliArgs.slice(1).join(" ") || "General task execution";
-  const autoSlug = (cliArgs[1] || firstArg).toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 16).replace(/^-|-$/g, "") || `${firstArg}-${Date.now().toString(36)}`;
-  const psArgs = [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    workflowScript,
-    "-Mode",
-    firstArg,
-    "-Slug",
-    autoSlug,
-    "-Prompt",
-    prompt
-  ];
-
-  const child = spawn(psHost, psArgs, {
-    stdio: 'inherit',
-    windowsHide: false
-  });
-  child.on('exit', (code) => process.exit(code ?? 0));
-  return;
-}
-
-// 5. Parallel Workflow Subcommand
-if (firstArg === 'parallel') {
-  if (process.env.HERDR_ENV !== '1') {
-    console.error(`\x1b[33m⚠️ 提示: 当前未处于 Herdr 复合终端环境中 (HERDR_ENV != 1)。\x1b[0m`);
-    console.error(`\x1b[36m💡 请先在当前项目目录运行 \x1b[1;37mplogr\x1b[0;36m 启动/连接 Herdr 复合终端，然后在 Herdr 窗格中派发工作流。\x1b[0m\n`);
-  }
-
-  const psHost = findPowerShell();
-  const matrixArg = cliArgs[1] || '[]';
-  const autoSlug = `matrix-${Date.now().toString(36)}`;
-  const psArgs = [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    parallelScript,
-    "-Slug",
-    autoSlug,
-    "-MatrixJson",
-    matrixArg
-  ];
-
-  const child = spawn(psHost, psArgs, {
-    stdio: 'inherit',
-    windowsHide: false
-  });
-  child.on('exit', (code) => process.exit(code ?? 0));
-  return;
-}
-
-// 5.5. Prune Worktrees Subcommand (`plogr prune`)
+// 5. Prune Worktrees Subcommand (`plogr prune`)
 if (firstArg === 'prune') {
   const projectRoot = process.cwd();
   console.log(`\x1b[36m🧹 Scanning and pruning stale Git worktrees in ${projectRoot}...\x1b[0m`);
@@ -402,8 +376,12 @@ if (firstArg === 'prune') {
   return;
 }
 
-// 6. Initialize / Configuration Mode (`plogr init` or flags like `--root-cause`)
-const isInit = firstArg === 'init' || firstArg?.startsWith('-');
+// 6. Initialize / Configuration Mode:
+// Triggered if:
+//  - Invoked via `npx plogr-workflow` (with or without arguments)
+//  - Explicitly called as `plogr init`
+//  - Flags like `--root-cause`, `--task`, `--session` are passed
+const isInit = isWorkflowInvoked || firstArg === 'init' || (Boolean(firstArg) && firstArg.startsWith('-'));
 if (isInit) {
   const psHost = findPowerShell();
   const initArgs = firstArg === 'init' ? cliArgs.slice(1) : cliArgs;
@@ -472,7 +450,72 @@ if (isInit) {
   return;
 }
 
-// 7. Fallback: Transparent Pass-Through to Native Herdr CLI
+// 7. Launch / Attach Herdr Composite Terminal (`plogr` with no args or `plogr attach`)
+if (!firstArg || firstArg === 'attach') {
+  const profile = getProjectProfile();
+  
+  // If project is not initialized yet and user types `plogr`, guide them to initialize
+  if (!profile && !firstArg) {
+    console.log(`\x1b[33mℹ️ 当前项目尚未配置 Herdr Dispatch 档案，正在启动交互式终端选配向导...\x1b[0m\n`);
+    const psHost = findPowerShell();
+    const psArgs = [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      initScript,
+    ];
+    const child = spawn(psHost, psArgs, {
+      stdio: "inherit",
+      windowsHide: false,
+    });
+    child.on("exit", (code) => {
+      if (code === 0) {
+        console.log(`\n\x1b[32m✨ 初始化完成！正在启动并连接到 Herdr 工作终端...\x1b[0m`);
+        const updatedProfile = getProjectProfile();
+        const boundSession = updatedProfile?.herdr_session?.name || (typeof updatedProfile?.herdr_session === 'string' ? updatedProfile.herdr_session : null);
+        const herdrBin = findHerdr();
+        const herdrArgs = boundSession ? ['--session', boundSession] : [];
+        const herdrChild = spawn(herdrBin, herdrArgs, { stdio: 'inherit', windowsHide: false });
+        herdrChild.on('exit', (c) => process.exit(c ?? 0));
+      } else {
+        process.exit(code ?? 1);
+      }
+    });
+    return;
+  }
+
+  const herdrBin = findHerdr();
+  const boundSession = profile?.herdr_session?.name || (typeof profile?.herdr_session === 'string' ? profile.herdr_session : null);
+  const targetSession = (firstArg === 'attach' && cliArgs[1]) ? cliArgs[1] : boundSession;
+
+  const herdrArgs = [];
+  if (targetSession) {
+    herdrArgs.push('--session', targetSession);
+  }
+
+  // If in attach mode, use `session attach`
+  if (firstArg === 'attach' && targetSession) {
+    herdrArgs.length = 0;
+    herdrArgs.push('session', 'attach', targetSession);
+  }
+
+  const child = spawn(herdrBin, herdrArgs, {
+    stdio: 'inherit',
+    windowsHide: false
+  });
+
+  child.on('error', (err) => {
+    console.error(`\x1b[31m✗ 无法启动 Herdr 复合终端 (${herdrBin}): ${err.message}\x1b[0m`);
+    console.error(`\x1b[33m💡 请确保已安装 Herdr: powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"\x1b[0m`);
+    process.exit(1);
+  });
+
+  child.on('exit', (code) => process.exit(code ?? 0));
+  return;
+}
+
+// 8. Fallback: Transparent Pass-Through to Native Herdr CLI
 const herdrBin = findHerdr();
 const child = spawn(herdrBin, cliArgs, {
   stdio: 'inherit',

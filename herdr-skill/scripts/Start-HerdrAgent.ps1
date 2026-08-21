@@ -123,7 +123,36 @@ if (Test-Path -LiteralPath $workflowReference) {
 } else {
   $workflowReference = 'references/workflow-protocol.md'
 }
-$skillPaths = if($skillManifest){ @($skillManifest.psobject.Properties | Where-Object {$_.Value.available} | ForEach-Object { "$($_.Name): $($_.Value.path)" }) -join '; ' }else{'not recorded'}
+function Get-AgentSpecificSkillPath([string]$ProjectRoot, [string]$SkillName, [string]$AgentKind, [string]$FallbackPath) {
+  $candidateDirs = @()
+  switch ($AgentKind) {
+    'claude'   { $candidateDirs += (Join-Path $ProjectRoot '.claude\skills'); $candidateDirs += (Join-Path $env:USERPROFILE '.claude\skills') }
+    'opencode' { $candidateDirs += (Join-Path $ProjectRoot '.opencode\skills') }
+    'codex'    { $candidateDirs += (Join-Path $ProjectRoot '.codex\skills') }
+    'cursor'   { $candidateDirs += (Join-Path $ProjectRoot '.cursor\skills') }
+    'gemini'   { $candidateDirs += (Join-Path $ProjectRoot '.gemini\skills') }
+  }
+  $candidateDirs += (Join-Path $ProjectRoot '.agents\skills')
+  $candidateDirs += (Join-Path $env:USERPROFILE '.agents\skills')
+  $candidateDirs += (Join-Path $PSScriptRoot '..\bundled_skills')
+
+  foreach ($dir in $candidateDirs) {
+    if (-not (Test-Path -LiteralPath $dir)) { continue }
+    $p = Join-Path $dir "$SkillName\SKILL.md"
+    if (Test-Path -LiteralPath $p) { return (Resolve-Path -LiteralPath $p).Path }
+    $pDirect = Join-Path $dir $SkillName
+    if (Test-Path -LiteralPath $pDirect) {
+      $nested = Join-Path $pDirect 'SKILL.md'
+      if (Test-Path -LiteralPath $nested) { return (Resolve-Path -LiteralPath $nested).Path }
+    }
+  }
+  if ($FallbackPath -and (Test-Path -LiteralPath $FallbackPath)) {
+    return (Resolve-Path -LiteralPath $FallbackPath).Path
+  }
+  return $FallbackPath
+}
+
+$skillsSection = ""
 $gitContract = if($gitProfile -and $gitProfile.repository -and -not $gitProfile.has_commit){'Git was initialized but has no baseline commit. For task/bugfix, do not edit or claim candidate: write outcome state blocked and explain that the user must review and create the initial baseline commit first.'}else{'Git baseline status permits normal task/bugfix execution; preserve unrelated changes.'}
 $ghGuideline = "GitHub Operations: For any GitHub-related operations (creating PRs, inspecting PRs/issues, checking GitHub Actions/CI runs, or viewing diffs), always use the GitHub CLI (`gh`) tool (e.g. `gh pr create`, `gh pr checks`, `gh issue view`, `gh run list`) rather than manual browser steps or unauthenticated git commands."
 function Get-PitfallsWarnings([string]$Project, [string]$PromptText) {
@@ -166,10 +195,43 @@ You are the research agent. Use the official mattpocock `/research` skill. Follo
   'verification' { @"
 You are the verification and integration agent. Use the official mattpocock `/code-review` skill with the fixed comparison `base_sha...candidate_sha` supplied by the candidate outcome. It performs standards and spec review; it does not replace independent acceptance testing. Read the execution candidate's result/branch/worktree supplied in the task prompt. Evaluate outcome, regression, spec/scope, and standards/integration independently. Report only reproducible P0/P1 blockers (maximum five) with acceptance rule and command/file evidence. Do not turn style suggestions into blockers. If all gates pass, confirm the target tree is clean and at the expected base, merge safely, re-run the applicable checks after merge, and report `merged` with merge SHA. Do not push: the workflow monitor owns the configured post-merge push. If any gate or safe merge fails, report `fix_required` or `blocked`; never force reset, clean, stash, or overwrite other work. $ghGuideline
 "@ }
+  'root_cause' { @"
+You are the root-cause analysis and bugfix execution agent. Follow the mandatory 3-step pipeline:
+(1) [PHASE 1 - READ-ONLY STATIC AUDIT & TRIAGE (只读审计与分诊)]: First execute the global `C:\Users\Lenovo\.agents\skills\audit-suite` skill in read-only audit mode.
+    - STRICT READ-ONLY PRINCIPLE (只读不改代码原则): You are strictly forbidden from modifying any production code during the audit phase.
+    - AUDIT REPORT REQUIREMENTS (诊断报告必须标明定位与机理): The generated audit report (`.audit/AUDIT-REPORT-*.md` / `FIX-TASK`) MUST explicitly document:
+      1. Exact Bug Location: Specific file path, line number range, and function/seam name.
+      2. Root Cause Mechanism: Deeply explain *why* and *how* the current logic, state machine, or async timing causes this bug.
+(2) [PHASE 2 - RED-CAPABLE REPRODUCTION (红灯复现证伪环)]: Use official mattpocock `/diagnosing-bugs` to build and run a minimal reproduction script. It MUST fail (RED 🔴) on the unpatched code. Do not ship a guess-based patch when no such reproduction loop exists.
+(3) [PHASE 3 - SURGICAL ROOT-CAUSE FIX & TDD (最小切口根治与代码质量)]:
+    - MINIMAL CHANGE PRINCIPLE (最小改动原则): Implement the minimal complete fix strictly at the confirmed root-cause seam. Strictly avoid unnecessary wide-scale refactoring or touching innocent files.
+    - STRICT CODE QUALITY & TDD GUARANTEE (保证代码质量): Use `/implement` and `/tdd` to ensure the reproduction test turns green (GREEN 🟢), all existing regression tests pass, and all temporary debugging logs/probes are cleaned up before candidate submission.
+$gitContract Before editing, make the mandatory worktree decision. Return `candidate` only with outcome fields worktree_decision, worktree_path, branch, base_sha, candidate_sha, changed_files, commands and results; do not merge. $ghGuideline
+"@ }
   default { if ($Category -eq 'bugfix') { @"
-You are the bugfix execution agent. Follow the mandatory 3-step pipeline: (1) First execute the global `C:\Users\Lenovo\.agents\skills\audit-suite` skill in read-only audit/triage mode to perform static/API review and generate the audit finding report; (2) Next, use official mattpocock `/diagnosing-bugs` to establish a minimal red-capable reproduction loop; (3) Then use `/implement` and `/tdd` at an agreed regression seam to repair root cause. $gitContract Before editing, build and run the red-capable reproduction. Do not ship a guess-based patch when no such loop exists. Make the worktree decision from Git state before editing. Return `candidate` only with outcome fields worktree_decision, worktree_path, branch, base_sha, candidate_sha, changed files, commands and results; do not merge. $ghGuideline
+You are the root-cause analysis and bugfix execution agent. Follow the mandatory 3-step pipeline:
+(1) [PHASE 1 - READ-ONLY STATIC AUDIT & TRIAGE (只读审计与分诊)]: First execute the global `C:\Users\Lenovo\.agents\skills\audit-suite` skill in read-only audit mode.
+    - STRICT READ-ONLY PRINCIPLE (只读不改代码原则): You are strictly forbidden from modifying any production code during the audit phase.
+    - AUDIT REPORT REQUIREMENTS (诊断报告必须标明定位与机理): The generated audit report (`.audit/AUDIT-REPORT-*.md` / `FIX-TASK`) MUST explicitly document:
+      1. Exact Bug Location: Specific file path, line number range, and function/seam name.
+      2. Root Cause Mechanism: Deeply explain *why* and *how* the current logic, state machine, or async timing causes this bug.
+(2) [PHASE 2 - RED-CAPABLE REPRODUCTION (红灯复现证伪环)]: Use official mattpocock `/diagnosing-bugs` to build and run a minimal reproduction script. It MUST fail (RED 🔴) on the unpatched code. Do not ship a guess-based patch when no such reproduction loop exists.
+(3) [PHASE 3 - SURGICAL ROOT-CAUSE FIX & TDD (最小切口根治与代码质量)]:
+    - MINIMAL CHANGE PRINCIPLE (最小改动原则): Implement the minimal complete fix strictly at the confirmed root-cause seam. Strictly avoid unnecessary wide-scale refactoring or touching innocent files.
+    - STRICT CODE QUALITY & TDD GUARANTEE (保证代码质量): Use `/implement` and `/tdd` to ensure the reproduction test turns green (GREEN 🟢), all existing regression tests pass, and all temporary debugging logs/probes are cleaned up before candidate submission.
+$gitContract Before editing, make the mandatory worktree decision. Return `candidate` only with outcome fields worktree_decision, worktree_path, branch, base_sha, candidate_sha, changed_files, commands and results; do not merge. $ghGuideline
 "@ } else { @"
-You are the task execution agent. You MUST operate in SUBAGENT-DRIVEN DEVELOPMENT MODE: act as the lead orchestrator to decompose the task into discrete work packages (e.g. schema/API design, core domain logic, data adapters, integration tests), dispatch specialized subagents to implement each subtask, and coordinate their outputs into a cohesive implementation. Use official mattpocock `/implement` for the integration, use `/tdd` at confirmed seams, and run `/code-review` against the candidate before handoff. $gitContract Before editing, define observable acceptance checks and make the mandatory worktree decision. Use an isolated worktree for dirty shared trees, concurrent work, or overlap risk. Implement the smallest complete change, run focused and relevant full validation, and commit the candidate branch. Return `candidate` only with outcome fields worktree_decision (`isolated` or `in_place`), worktree_path, branch, base_sha, candidate_sha, changed_files, acceptance checks and command results; do not merge. $ghGuideline
+You are the task execution agent. You MUST operate in SUBAGENT-DRIVEN DEVELOPMENT MODE as the lead orchestrator:
+(1) [MANDATORY PHASE 0 - EXECUTION TOPOLOGY & CHAIN DESIGN (强制前置：设计执行链路)]:
+    Before editing code or dispatching subagents, you MUST FIRST explicitly design the execution chain and dependency topology:
+    - SERIAL CHAINS (串行依赖链路): Clearly identify subtasks with upstream dependencies (e.g. data model / API schema -> domain business logic -> UI integration) that MUST execute sequentially to avoid hallucinated interfaces.
+    - PARALLEL BATCHES (并行并发批次): Clearly identify decoupled, independent work packages (e.g. separate domain modules, utility helpers, independent test suites) that CAN execute concurrently across subagents to maximize throughput.
+    - Record your designed Execution Chain (Serial vs Parallel topology) in your progress tracking and result.md before launching subagents.
+(2) [STRUCTURED SUBAGENT DISPATCH (按拓扑派发)]: Dispatch focused subagents according to your designed chain (sequencing serial dependencies strictly and firing parallel batches concurrently).
+(3) [COHESIVE INTEGRATION, MINIMAL CHANGE & TDD QUALITY (统一集成、最小改动与质量保证)]:
+    - MINIMAL CHANGE PRINCIPLE (最小改动原则): Implement the smallest complete change that fulfills all requirements. Strictly avoid scope creep or touching unrelated code.
+    - STRICT CODE QUALITY GUARANTEE (保证代码质量): Enforce clean architecture, type safety, and comprehensive test coverage. Use official mattpocock `/implement` for integration, use `/tdd` at confirmed seams, and run `/code-review` against the candidate before handoff.
+$gitContract Before editing, define observable acceptance checks and make the mandatory worktree decision. Use an isolated worktree for dirty shared trees, concurrent work, or overlap risk. Implement the smallest complete change, run focused and relevant full validation, and commit the candidate branch. Return `candidate` only with outcome fields worktree_decision (`isolated` or `in_place`), worktree_path, branch, base_sha, candidate_sha, changed_files, acceptance checks and command results; do not merge. $ghGuideline
 "@ } }
 }
 try {
@@ -186,9 +248,6 @@ $Prompt
 $pitfallsSection
 ## Workflow role contract
 $roleContract
-
-## Available mattpocock skills
-$skillPaths
 
 Your `progress.json` must be updated at phase boundaries with `{ "phase": "investigating|implementing|testing|candidate_ready|blocked", "updated_at": "...", "completed": [], "next_action": "..." }`. Your `result.md` must state the workflow state (`candidate`, `passed`, `fix_required`, `blocked`, or `merged`), conclusion, commands/tests and outcomes, evidence, changed files, blockers, and confirmation that no secrets were recorded. Include the worktree/branch/commit/merge facts applicable to your role. For `research`, remain read-only unless the user explicitly requests changes.
 

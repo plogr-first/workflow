@@ -30,7 +30,13 @@ Verification: audit every decision-critical claim for source provenance, evidenc
 
 Use `Mode task`.
 
-**Subagent-Driven Development Mode (Mandatory)**: Task Execution Agents must operate as lead orchestrators using subagent-driven development. Rather than executing a monolithic implementation in a single context, the primary Task Agent decomposes complex requirements into discrete work packages (e.g. schema/API design, core domain logic, data adapter, integration tests) and delegates them to focused subagents. The primary Task Agent orchestrates subagent deliverables, enforces interface consistency, runs unified TDD, and prepares the candidate commit.
+**Subagent-Driven Development Mode (Mandatory)**: Task Execution Agents must operate as lead orchestrators using subagent-driven development:
+- **Phase 0 - Topology & Execution Chain Design (强制前置：设计执行链路)**: Before writing code or launching subagents, the primary Task Agent must analyze task dependencies and explicitly design the execution chain:
+  - **Serial Chains (串行依赖链路)**: Subtasks with upstream dependencies (e.g. schema/API design -> backend logic -> UI integration) must be sequenced strictly one after another to prevent interface hallucinations.
+  - **Parallel Batches (并行并发批次)**: Truly decoupled modules and independent test suites must be dispatched concurrently to maximize throughput.
+  - The Task Agent must record this execution chain in progress tracking and `result.md`.
+- **Phase 1 - Structured Subagent Delegation**: Dispatch specialized subagents according to the topological execution plan.
+- **Phase 2 - Unified Integration & TDD**: Coordinate subagent deliverables, enforce contract consistency, run unified TDD via `/implement`, and prepare the candidate commit.
 
 Execution: define observable acceptance checks; inspect Git status/current branch/worktrees/concurrent edits; isolate in a worktree when shared tree is dirty, concurrent, or overlapping; implement the smallest complete change; run focused and relevant full checks; commit a `candidate`. Record worktree path, branch, base SHA, candidate SHA, changed files, and command results. Do not merge.
 
@@ -61,9 +67,11 @@ All GitHub interactions (repository lookup, authentication verification, PR crea
 Use `Mode bugfix`.
 
 **Audit-First & Root-Cause Pipeline**:
-1. **Audit Phase**: The Agent MUST first execute the global `C:\Users\Lenovo\.agents\skills\audit-suite` skill for read-only static analysis, code/API alignment check, and symptom triage to generate an audit report (`.audit/AUDIT-REPORT-*.md` / `FIX-TASK`).
-2. **Diagnosis Phase**: Use `mattpocock/diagnosing-bugs` to build and run a narrow, red-capable reproduction for the reported symptom. Minimise it and test falsifiable hypotheses one variable at a time.
-3. **Fix & TDD Phase**: Use `mattpocock/implement` and `tdd` to apply the minimal fix at the root cause seam, rerun the original reproduction to confirm green, remove temporary instrumentation, and commit `candidate`. If no red-capable loop exists, emit `blocked`; do not ship a guess-based patch.
+1. **Audit Phase (只读审计与分诊)**: The Root-Cause Agent MUST first execute the global `C:\Users\Lenovo\.agents\skills\audit-suite` skill in **strict read-only mode** (no source code edits permitted). The generated audit report (`.audit/AUDIT-REPORT-*.md` / `FIX-TASK`) must explicitly pinpoint:
+   - **Exact Bug Location**: Specific file path, line range, and function/seam.
+   - **Root Cause Mechanism**: Detailed explanation of *why* and *how* current logic/timing/state machine causes the bug.
+2. **Diagnosis Phase (红灯复现证伪环)**: Use `mattpocock/diagnosing-bugs` to build and run a narrow, red-capable reproduction script for the reported symptom. It MUST fail (RED 🔴) on unpatched code. If no red-capable loop exists, emit `blocked`; do not ship a guess-based patch.
+3. **Fix & TDD Phase (最小切口根治与质量保证)**: Use `mattpocock/implement` and `tdd` adhering strictly to the **Minimal Complete Change Principle** (never touch innocent files or perform wide-scale refactoring) and **Strict Code Quality Guarantee** (type safety, clean logic, zero lint regressions). Rerun the original reproduction to confirm green (GREEN 🟢), verify full regression checks, remove temporary instrumentation, and commit `candidate`.
 
 Verification independently reruns original reproduction and regression check, confirms debug cleanup, then applies task gates 1–5 and merges only after pass.
 
@@ -75,4 +83,4 @@ A verifier reports only reproducible P0/P1 blockers, maximum five. Every item st
 
 `npx plogr-workflow` binds a project profile to one named Herdr session. Every formal `workflow.json` records that session, a unique workflow ID, task/verifier Agent names, current role, and repair round. `herdr resume` only considers unfinished workflows in the bound project/session. It reads `events.jsonl`, handoff files, progress files, and Git/worktree state; it never infers identity from a pane title or chat history. If the recorded Agent is gone, it starts a replacement generation and updates the workflow state before continuing. Multiple resumable workflows require an explicit workflow ID or `--all`. Terminal states are never reactivated.
 
-Use the official mattpocock engineering skills recorded by `npx plogr-workflow`: research uses `/research`; task execution uses `/implement`, `/tdd` at confirmed seams, then `/code-review`; bugfix uses `/diagnosing-bugs`, `/tdd` where appropriate, then `/code-review`; verification uses `/code-review` against the fixed point `base_sha...candidate_sha`. `/code-review` is independent review, not the merge authority: the verifier separately runs the Herdr acceptance and API-contract gates before integration. A missing required skill is a blocker, never an assumed pass.
+All engineering skills (`audit-suite`, `diagnosing-bugs`, `implement`, `tdd`, `code-review`, `research`) are formal local Agent Skills containing a `SKILL.md` rulebook. Agents MUST NOT guess or treat these as casual words; before executing a phase that requires a skill, the Agent must read and strictly follow the workflow steps defined in the corresponding `SKILL.md`. Research uses `/research`; task execution uses `/implement`, `/tdd` at confirmed seams, then `/code-review`; bugfix uses `audit-suite` (read-only), `/diagnosing-bugs` (red loop), `/tdd`, then `/code-review`; verification uses `/code-review` against the fixed point `base_sha...candidate_sha`. `/code-review` is independent review, not the merge authority: the verifier separately runs the Herdr acceptance and API-contract gates before integration. A missing required skill is a blocker, never an assumed pass.

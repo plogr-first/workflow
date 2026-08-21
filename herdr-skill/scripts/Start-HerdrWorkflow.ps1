@@ -18,13 +18,22 @@ if ([string]::IsNullOrWhiteSpace($session)) { throw "Herdr profile is missing he
 $git = $profile.git
 if ($Mode -ne 'research' -and $git.repository -and -not $git.has_commit) { throw "Git is initialized but has no baseline commit in $project. Review the project, create the first commit, rerun 'npx plogr-workflow', then dispatch task/bugfix." }
 $requiredSkills = if($Mode -eq 'research'){@('research')}elseif($Mode -eq 'bugfix'){@('diagnosing-bugs','implement','code-review')}else{@('implement','code-review')}
-foreach($skill in $requiredSkills){
-  $entry=$profile.mattpocock_skills.$skill
-  if(-not $entry -or -not $entry.available){
-    throw "Required mattpocock skill '$skill' is not installed. Re-run 'npx plogr-workflow' after installing the skill."
+function Test-HerdrSkillAvailable($Manifest, [string]$Skill) {
+  $aliases = switch ($Skill) {
+    'implement' { @('implement', 'task_agent', 'task-agent') }
+    'diagnosing-bugs' { @('diagnosing-bugs', 'bugfix_agent', 'bugfix-agent') }
+    'code-review' { @('code-review', 'verification_agent', 'verification-agent') }
+    'research' { @('research', 'research_agent', 'research-agent') }
+    default { @($Skill, ($Skill -replace '-', '_'), ($Skill -replace '_', '-')) }
   }
-  if($entry.verified_official -ne $true -and $env:HERDR_ALLOW_UNVERIFIED_SKILLS -ne '1'){
-    Write-Host "Notice: Skill '$skill' hash did not match pinned snapshot (upstream updated). Using installed version." -ForegroundColor DarkYellow
+  foreach ($name in $aliases) {
+    if ($Manifest.psobject.Properties[$name] -and $Manifest.$name.available) { return $true }
+  }
+  return $false
+}
+foreach($skill in $requiredSkills){
+  if (-not (Test-HerdrSkillAvailable $profile.mattpocock_skills $skill)) {
+    throw "Required workflow skill '$skill' is not installed. Re-run 'npx plogr-workflow' to deploy skills."
   }
 }
 $stamp = Get-Date -Format 'HHmmssfff'
@@ -45,7 +54,7 @@ if (-not $TaskName) { $TaskName = New-AgentName $(if($Mode -eq 'research'){'rese
 if (-not $VerifierName) { $VerifierName = New-AgentName 'verify' }
 if ($TaskName -eq $VerifierName) { throw 'Task and verification Agent names must differ.' }
 $launcher = Join-Path $PSScriptRoot 'Start-HerdrAgent.ps1'
-$taskProfile = if ($Mode -eq 'research') { 'research' } else { 'task' }
+$taskProfile = if ($Mode -eq 'research') { 'research' } elseif ($Mode -eq 'bugfix') { 'root_cause' } else { 'task' }
 $task = & $launcher -Profile $taskProfile -Name $TaskName -Category $Mode -Slug $Slug -Prompt $Prompt -ProjectRoot $project -SessionName $session | ConvertFrom-Json
 if (-not $task.name -or -not $task.outcome) { throw 'Task Agent dispatch did not return a durable handoff.' }
 $task | Add-Member -Force -NotePropertyName original_agent_name -NotePropertyValue ([string]$task.name)

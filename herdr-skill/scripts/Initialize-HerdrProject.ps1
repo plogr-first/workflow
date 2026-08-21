@@ -365,36 +365,74 @@ function Install-HerdrSkills([string]$Project, [string[]]$TargetAgents, [bool]$S
     }
   } else { @('*') }
 
-  Write-Host "Installing Matt Pocock skills via npx skills (Agents: $($agentArgs -join ', '))..." -ForegroundColor Cyan
-  Push-Location $Project
-  try {
-    & npx skills@latest add mattpocock/skills --copy -a $agentArgs -y 2>&1 | Out-Null
-  } catch {
-    Write-Host "Notice: npx skills install finished, ensuring bundled fallback..." -ForegroundColor DarkGray
-  } finally {
-    Pop-Location
+  # 1. Deploy AGENTS.md and CLAUDE.md progressive disclosure index
+  $indexContent = @"
+# Agent Skills
+
+This file is a progressive-disclosure skill index.
+
+## Universal skill
+
+Read this local skill before taking action:
+
+- [Karpathy Guidelines](./.agents/skills/karpathy-guidelines/SKILL.md)
+
+## Conditional skills
+
+Load only the skill matching the active task:
+
+- Feature implementation: [Task Agent](./.agents/skills/task-agent/SKILL.md)
+- Bug diagnosis or repair: [Bugfix Agent](./.agents/skills/bugfix-agent/SKILL.md)
+- Read-only investigation: [Research Agent](./.agents/skills/research-agent/SKILL.md)
+- Candidate validation or integration: [Verification Agent](./.agents/skills/verification-agent/SKILL.md)
+
+Do not load all skills at once. After loading a skill, read its ``references/`` files only when the current phase requires them. Do not load unrelated role skills.
+"@
+
+  $agentsMdPath = Join-Path $Project 'AGENTS.md'
+  if (-not (Test-Path -LiteralPath $agentsMdPath)) {
+    Write-Host "Deploying progressive disclosure index: AGENTS.md..." -ForegroundColor Cyan
+    Set-Content -LiteralPath $agentsMdPath -Value $indexContent -Encoding utf8
   }
 
-  # Install bundled audit-suite to project and agent directories
-  $bundledAuditSuite = Join-Path $PSScriptRoot '..\bundled_skills\audit-suite'
-  if (Test-Path -LiteralPath $bundledAuditSuite) {
-    Write-Host "Deploying bundled audit-suite skill to project & agent directories..." -ForegroundColor Cyan
-    $destinations = @(
-      (Join-Path $Project '.agents\skills\audit-suite'),
-      (Join-Path $env:USERPROFILE '.agents\skills\audit-suite')
-    )
-    foreach ($ag in $agentArgs) {
-      if ($ag -eq 'claude-code' -or $ag -eq '*') { $destinations += Join-Path $Project '.claude\skills\audit-suite' }
-      if ($ag -eq 'codex' -or $ag -eq '*') { $destinations += Join-Path $Project '.codex\skills\audit-suite' }
-      if ($ag -eq 'opencode' -or $ag -eq '*') { $destinations += Join-Path $Project '.opencode\skills\audit-suite' }
-      if ($ag -eq 'cursor' -or $ag -eq '*') { $destinations += Join-Path $Project '.cursor\skills\audit-suite' }
-      if ($ag -eq 'gemini' -or $ag -eq '*') { $destinations += Join-Path $Project '.gemini\skills\audit-suite' }
+  $claudeMdPath = Join-Path $Project 'CLAUDE.md'
+  if (-not (Test-Path -LiteralPath $claudeMdPath)) {
+    Write-Host "Deploying progressive disclosure index: CLAUDE.md..." -ForegroundColor Cyan
+    Set-Content -LiteralPath $claudeMdPath -Value $indexContent -Encoding utf8
+  }
+
+  # 2. Deploy bundled progressive skills & audit-suite
+  $bundledSkillsDir = Join-Path $PSScriptRoot '..\bundled_skills'
+  $workflowSkillsDir = Join-Path (Split-Path (Split-Path $PSScriptRoot)) '.agents\skills'
+
+  $skillNames = @('karpathy-guidelines', 'task-agent', 'bugfix-agent', 'research-agent', 'verification-agent', 'audit-suite')
+  Write-Host "Deploying bundled progressive workflow skills to project & agent directories..." -ForegroundColor Cyan
+
+  foreach ($s in $skillNames) {
+    $srcPath = Join-Path $bundledSkillsDir $s
+    if (-not (Test-Path -LiteralPath $srcPath) -and (Test-Path -LiteralPath $workflowSkillsDir)) {
+      $srcPath = Join-Path $workflowSkillsDir $s
     }
-    foreach ($dest in ($destinations | Select-Object -Unique)) {
-      try {
-        New-Item -ItemType Directory -Force -Path $dest | Out-Null
-        Copy-Item -Path "$bundledAuditSuite\*" -Destination $dest -Recurse -Force
-      } catch {}
+    if (Test-Path -LiteralPath $srcPath) {
+      $destinations = @(
+        (Join-Path $Project ".agents\skills\$s"),
+        (Join-Path $env:USERPROFILE ".agents\skills\$s")
+      )
+      foreach ($ag in $agentArgs) {
+        if ($ag -eq 'claude-code' -or $ag -eq '*') { $destinations += Join-Path $Project ".claude\skills\$s" }
+        if ($ag -eq 'codex' -or $ag -eq '*') { $destinations += Join-Path $Project ".codex\skills\$s" }
+        if ($ag -eq 'opencode' -or $ag -eq '*') { $destinations += Join-Path $Project ".opencode\skills\$s" }
+        if ($ag -eq 'cursor' -or $ag -eq '*') { $destinations += Join-Path $Project ".cursor\skills\$s" }
+        if ($ag -eq 'gemini' -or $ag -eq '*') { $destinations += Join-Path $Project ".gemini\skills\$s" }
+      }
+      foreach ($dest in ($destinations | Select-Object -Unique)) {
+        try {
+          if (-not (Test-Path -LiteralPath $dest)) {
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          }
+          Copy-Item -Path "$srcPath\*" -Destination $dest -Recurse -Force
+        } catch {}
+      }
     }
   }
 }
@@ -441,14 +479,20 @@ function Get-MattpockSkills([string]$Project) {
     }
   }
 
-  # Check audit-suite (project agent folders, global user folder, or bundled skill)
-  $auditRoots = $roots + @(Join-Path $PSScriptRoot '..\bundled_skills')
-  $auditCandidates = @($auditRoots | ForEach-Object { Join-Path $_ 'audit-suite\SKILL.md' } | Where-Object { Test-Path -LiteralPath $_ })
-  $hasAuditSuite = ($auditCandidates.Count -gt 0)
-  $out['audit_suite'] = [ordered]@{
-    available = [bool]$hasAuditSuite
-    path = if ($hasAuditSuite) { $auditCandidates[0] } else { $null }
-    verified_official = $true
+  # Check progressive workflow skills & audit-suite
+  $bundledSkillsDir = Join-Path $PSScriptRoot '..\bundled_skills'
+  $workflowSkillsDir = Join-Path (Split-Path (Split-Path $PSScriptRoot)) '.agents\skills'
+  $progressiveSkills = @('karpathy-guidelines', 'task-agent', 'bugfix-agent', 'research-agent', 'verification-agent', 'audit-suite')
+  $auditRoots = $roots + @($bundledSkillsDir, $workflowSkillsDir)
+  foreach ($ws in $progressiveSkills) {
+    $wsCandidates = @($auditRoots | ForEach-Object { Join-Path $_ "$ws\SKILL.md" } | Where-Object { Test-Path -LiteralPath $_ })
+    $hasWs = ($wsCandidates.Count -gt 0)
+    $keyName = $ws -replace '-', '_'
+    $out[$keyName] = [ordered]@{
+      available = [bool]$hasWs
+      path = if ($hasWs) { $wsCandidates[0] } else { $null }
+      verified_official = $true
+    }
   }
   return $out
 }

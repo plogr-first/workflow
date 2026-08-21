@@ -4,7 +4,8 @@ param(
   [Parameter(Mandatory)][string]$MatrixJson,
   [string]$ProjectRoot = (Get-Location).Path,
   [string]$SessionName,
-  [switch]$SkipAgentLaunch
+  [switch]$SkipAgentLaunch,
+  [switch]$SkipMonitor
 )
 
 $ErrorActionPreference = 'Stop'
@@ -199,16 +200,19 @@ $masterWf = [ordered]@{
 $masterWf | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $wfPath -Encoding utf8
 
 # 3. Start Background Monitor
-$monitor = Join-Path $PSScriptRoot 'Monitor-HerdrWorkflow.ps1'
-$psHost = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-$monitorArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -WorkflowPath `"$wfPath`""
-$process = Start-Process -FilePath $psHost -ArgumentList $monitorArgs -WindowStyle Hidden -PassThru
+$process = $null
+if (-not $SkipMonitor) {
+  $monitor = Join-Path $PSScriptRoot 'Monitor-HerdrWorkflow.ps1'
+  $psHost = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+  $monitorArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -WorkflowPath `"$wfPath`""
+  $process = Start-Process -FilePath $psHost -ArgumentList $monitorArgs -WindowStyle Hidden -PassThru
+}
 
 Write-Host "`n╔═════════════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
 Write-Host "║  🚀 PLOGR MATRIX PARALLEL WORKFLOW DISPATCHED                           ║" -ForegroundColor Cyan
 Write-Host "║  Master Workflow : $wfId" -ForegroundColor DarkCyan
 Write-Host "║  Parallel Matrix : $($matrix.Count) Sub-Worktrees Mounted" -ForegroundColor DarkCyan
-Write-Host "║  Monitor Process : PID $($process.Id)" -ForegroundColor DarkCyan
+Write-Host "║  Monitor Process : $(if($process){'PID ' + $process.Id}else{'Deferred/Manual'})" -ForegroundColor DarkCyan
 Write-Host "║  Session Name    : $targetSession" -ForegroundColor DarkCyan
 Write-Host "╚═════════════════════════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
 

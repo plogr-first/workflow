@@ -159,7 +159,7 @@ function Push-MergedWorkflow($Workflow) {
   if($LASTEXITCODE -ne 0){throw "git push $remote $targetBranch failed: $($output -join ' ')"}
   return 'pushed'
 }
-function OutcomeHash([string]$Path) { if(Test-Path $Path){ return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }; return $null }
+function OutcomeHash([string]$Path) { if(Test-Path -LiteralPath $Path){ return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }; return $null }
 function Prompt-Agent([string]$Name, [string]$Message, $Entry = $null) {
   $prefix = if($script:Session){ @('--session',$script:Session) } else { @() }
   $pane = if ($Entry) { [string]$Entry.pane_id } else { $null }
@@ -194,14 +194,14 @@ function Agent-Live([string]$Name) {
   }
 }
 function Acquire-Lease {
-  if (Test-Path $lockPath) {
+  if (Test-Path -LiteralPath $lockPath) {
     try {
-      $old = Get-Content $lockPath -Raw | ConvertFrom-Json
+      $old = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
       $proc = Get-Process -Id $old.pid -ErrorAction SilentlyContinue
       if ($proc -and ([datetime]$old.lease_expires_at) -gt (Get-Date)) { return $false }
-      Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
     } catch {
-      Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
     }
   }
   $lease = [ordered]@{ controller_id = "$PID-$([guid]::NewGuid().ToString('N'))"; pid = $PID; lease_expires_at = (Get-Date).AddSeconds(30).ToString('o') }
@@ -219,8 +219,8 @@ function Acquire-Lease {
     return $false
   }
 }
-function Renew-Lease { if(Test-Path $lockPath){ try { $l=Get-Content $lockPath -Raw|ConvertFrom-Json; if($l.controller_id -eq $script:ControllerId){$l.lease_expires_at=(Get-Date).AddSeconds(30).ToString('o');$l|ConvertTo-Json|Set-Content $lockPath -Encoding utf8} }catch{} } }
-function Release-Lease { if(Test-Path $lockPath){try{$l=Get-Content $lockPath -Raw|ConvertFrom-Json;if($l.controller_id -eq $script:ControllerId){Remove-Item $lockPath -Force}}catch{}} }
+function Renew-Lease { if(Test-Path -LiteralPath $lockPath){ try { $l=Get-Content -LiteralPath $lockPath -Raw|ConvertFrom-Json; if($l.controller_id -eq $script:ControllerId){$l.lease_expires_at=(Get-Date).AddSeconds(30).ToString('o');$l|ConvertTo-Json|Set-Content -LiteralPath $lockPath -Encoding utf8} }catch{} } }
+function Release-Lease { if(Test-Path -LiteralPath $lockPath){try{$l=Get-Content -LiteralPath $lockPath -Raw|ConvertFrom-Json;if($l.controller_id -eq $script:ControllerId){Remove-Item -LiteralPath $lockPath -Force}}catch{}} }
 if (-not (Acquire-Lease)) { exit 0 }
 try {
   $workflow = Read-Workflow; $script:Session = [string]$workflow.session_name

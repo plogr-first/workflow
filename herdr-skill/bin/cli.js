@@ -104,6 +104,104 @@ function showHelp() {
 `);
 }
 
+// ── Ensure Global plogr Command In System PATH ────────────────────
+function installGlobalPlogr() {
+  try {
+    const isWin = process.platform === "win32";
+    const userHome = process.env.USERPROFILE || process.env.HOME || "";
+    const localAppData = process.env.LOCALAPPDATA || path.join(userHome, "AppData", "Local");
+    const appData = process.env.APPDATA || path.join(userHome, "AppData", "Roaming");
+
+    const targetDirs = [];
+
+    // 1. npm global bin directory
+    try {
+      const npmPrefix = execSync("npm prefix -g", { encoding: "utf8", timeout: 2000 }).trim();
+      if (npmPrefix) {
+        targetDirs.push(isWin ? npmPrefix : path.join(npmPrefix, "bin"));
+      }
+    } catch {}
+
+    if (isWin) {
+      targetDirs.push(
+        path.join(appData, "npm"),
+        path.join(localAppData, "Programs", "Herdr", "bin"),
+        path.join(userHome, ".local", "bin"),
+        path.join(userHome, "bin")
+      );
+    } else {
+      targetDirs.push(
+        path.join(userHome, ".local", "bin"),
+        path.join(userHome, "bin"),
+        "/usr/local/bin"
+      );
+    }
+
+    const currentCliPath = path.resolve(__dirname, "cli.js").replace(/\\/g, "/");
+
+    const launcherJs = `#!/usr/bin/env node
+"use strict";
+const fs = require("fs");
+const { spawn } = require("child_process");
+
+const localCli = "${currentCliPath}";
+if (fs.existsSync(localCli)) {
+  require(localCli);
+} else {
+  const child = spawn("npx", ["plogr-workflow", ...process.argv.slice(2)], {
+    stdio: "inherit",
+    shell: true
+  });
+  child.on("exit", (code) => process.exit(code ?? 0));
+}
+`;
+
+    const cmdContent = `@ECHO off
+node "%~dp0plogr-cli.js" %*
+`;
+
+    const ps1Content = `#!/usr/bin/env pwsh
+$cli = Join-Path $PSScriptRoot 'plogr-cli.js'
+if ($MyInvocation.ExpectingInput) {
+  $input | & node $cli $args
+} else {
+  & node $cli $args
+}
+exit $LASTEXITCODE
+`;
+
+    const shContent = `#!/usr/bin/env sh
+basedir=$(dirname "$0")
+if [ -f "$basedir/plogr-cli.js" ]; then
+  exec node "$basedir/plogr-cli.js" "$@"
+else
+  exec npx plogr-workflow "$@"
+fi
+`;
+
+    for (const dir of targetDirs) {
+      if (!dir) continue;
+      try {
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        if (fs.existsSync(dir)) {
+          fs.writeFileSync(path.join(dir, "plogr-cli.js"), launcherJs, "utf8");
+          if (isWin) {
+            fs.writeFileSync(path.join(dir, "plogr.cmd"), cmdContent, "utf8");
+            fs.writeFileSync(path.join(dir, "plogr.ps1"), ps1Content, "utf8");
+          }
+          const shPath = path.join(dir, "plogr");
+          fs.writeFileSync(shPath, shContent, { encoding: "utf8", mode: 0o755 });
+        }
+      } catch {}
+    }
+  } catch {}
+}
+
+// Automatically ensure global `plogr` is registered across all user environments
+installGlobalPlogr();
+
 // ── Execution Entry ───────────────────────────────────────────────
 const cliArgs = process.argv.slice(2);
 const firstArg = cliArgs[0] ? cliArgs[0].toLowerCase() : null;

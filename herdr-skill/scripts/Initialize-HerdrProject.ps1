@@ -671,5 +671,6 @@ Write-Host "  Task Agent:       $($task.kind)$($(if($task.model){' / ' + $task.m
 Write-Host "  Verifier Agent:   $($verification.kind)$($(if($verification.model){' / ' + $verification.model}else{''}))" -ForegroundColor White
 Write-Host "  Research Agent:   $($research.kind)$($(if($research.model){' / ' + $research.model}else{''}))" -ForegroundColor White
 Write-Host "  Skill Target:     $(if($targetAgents){$targetAgents -join ', '}else{'all (*)'})" -ForegroundColor White
+Write-Host "  Global Command:   已自动挂载! 之后在任意终端输入 plogr 即可直接浮现 Herdr 复合终端" -ForegroundColor Green
+Write-Host "  Live HUD:         plogr hud (开启 24-bit 炫彩流光实时看板)" -ForegroundColor Cyan
 Write-Host ""
-

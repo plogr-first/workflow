@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [Parameter(Mandatory)][ValidatePattern('^[a-z0-9]+(-[a-z0-9]+)*$')][string]$Slug,
   [Parameter(Mandatory)][string]$MatrixJson,
@@ -17,10 +17,16 @@ if ($env:HERDR_ENV -ne '1') {
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $profilePath = Join-Path $project 'herdr\dispatch-profile.json'
 if (-not (Test-Path -LiteralPath $profilePath)) {
-  throw "Project dispatch profile not found at '$profilePath'. Run 'npx plogr-workflow' first."
+ throw "Project dispatch profile not found at '$profilePath'. Run 'plogr init' first."
 }
 
 $profile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json
+if ($profile.project_skill_registry_required -eq $true) {
+  $registryRelative = if ($profile.project_skill_registry) { [string]$profile.project_skill_registry } else { '.agents/project-skills.json' }
+  $registryPath = Join-Path $project $registryRelative
+ try { $projectSkillRegistry = Get-Content -LiteralPath $registryPath -Raw | ConvertFrom-Json } catch { throw "Project skill registration is missing or invalid: $registryPath. Re-run 'plogr init' to register project skills." }
+ if (-not $projectSkillRegistry.registrations -or @($projectSkillRegistry.registrations).Count -eq 0) { throw "Project skill registration has no active platform entries: $registryPath. Re-run 'plogr init'." }
+}
 $boundSession = if ($profile.herdr_session.name) { [string]$profile.herdr_session.name } elseif ($profile.herdr_session) { [string]$profile.herdr_session } else { 'default' }
 $targetSession = if ($SessionName) { $SessionName } else { $boundSession }
 if ($targetSession -ne $boundSession) {
@@ -64,12 +70,30 @@ function Append-Event([string]$EvName, [hashtable]$Payload) {
 Append-Event 'parallel_workflow_created' @{ slug = $Slug; matrix_count = $matrix.Count }
 
 $matrixItems = [System.Collections.Generic.List[PSCustomObject]]::new()
+$masterWf = [ordered]@{
+  schema_version = 3; workflow_id = $wfId; mode = 'parallel_task'; slug = $Slug; session_name = $targetSession; project_root = $project
+  state = 'initializing'; next_role = 'matrix_tasks'; repair_round = 0; max_repair_rounds = 2; created_at = (Get-Date -Format o); updated_at = (Get-Date -Format o)
+  last_processed = [ordered]@{ task_outcome_hash = $null; verifier_outcome_hash = $null }; matrix = $matrixItems; git = $profile.git; verifier = $null
+}
+function Save-MasterWorkflow { $masterWf.updated_at = (Get-Date -Format o); $tmp = "$wfPath.$([guid]::NewGuid().ToString('N')).tmp"; $masterWf | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $tmp -Encoding utf8; Move-Item -LiteralPath $tmp -Destination $wfPath -Force }
+Save-MasterWorkflow
 $worktreeBase = Join-Path $project '.worktrees'
 if (-not (Test-Path -LiteralPath $worktreeBase)) {
   New-Item -ItemType Directory -Force -Path $worktreeBase | Out-Null
 }
 
 $agentScript = Join-Path $PSScriptRoot 'Start-HerdrAgent.ps1'
+function Invoke-ExpectedGitCleanup([string[]]$Arguments) {
+  # An absent stale resource is expected. Windows PowerShell can otherwise
+  # surface git's non-zero cleanup exit as a terminating NativeCommandError.
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    & git @Arguments 2>$null | Out-Null
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
+}
 
 # 1. Mount all parallel Worktrees and launch Agents concurrently
 foreach ($sub in $matrix) {
@@ -84,12 +108,29 @@ foreach ($sub in $matrix) {
 
   # Clean old worktree/branch if exists
   if (Test-Path -LiteralPath $wtDir) {
-    & git -C $project worktree remove --force $wtDir 2>&1 | Out-Null
+    # Removing a stale worktree can legitimately fail when its metadata is
+    # already gone.  This cleanup must not turn that expected condition into a
+    # native-command exception under PowerShell.
+    Invoke-ExpectedGitCleanup @('-C', $project, 'worktree', 'remove', '--force', $wtDir)
   }
-  & git -C $project branch -D $branchName 2>&1 | Out-Null
+  # Likewise, an absent branch is the normal first-run condition.
+  Invoke-ExpectedGitCleanup @('-C', $project, 'branch', '-D', $branchName)
 
   # Create branch and isolated worktree
-  & git -C $project worktree add -b $branchName $wtDir HEAD 2>&1 | Out-Null
+  # Git reports normal worktree progress on stderr. Capture it while allowing
+  # the actual exit code (rather than PowerShell's stderr adaptation) to decide
+  # whether creation succeeded.
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $worktreeAddOutput = & git -C $project worktree add -b $branchName $wtDir HEAD 2>&1
+    $worktreeAddExit = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
+  if ($worktreeAddExit -ne 0) {
+    throw "Failed to create isolated worktree '$wtDir' on branch '$branchName': $($worktreeAddOutput -join ' ')"
+  }
 
   $subHandoff = Join-Path $wfDir "sub-$subId"
   New-Item -ItemType Directory -Force -Path $subHandoff | Out-Null
@@ -124,6 +165,8 @@ Candidate Branch: $branchName
     status = 'executing'
   }
   $matrixItems.Add([pscustomobject]$subItem)
+  $masterWf.matrix = $matrixItems
+  Save-MasterWorkflow
 
   Append-Event 'subtask_dispatched' @{ subtask_id = $subId; branch = $branchName; worktree = $wtDir; agent = $subAgentKind }
 
@@ -138,7 +181,9 @@ Candidate Branch: $branchName
         -HandoffDirectory $subHandoff `
         -SessionName $targetSession 2>&1 | Out-Null
     } catch {
-      Write-Host "  ⚠️ Parallel agent launch deferred/spawned in background: $($_.Exception.Message)" -ForegroundColor Yellow
+      $subItem.status = 'blocked'; $masterWf.state = 'blocked'; $masterWf.next_role = ''; $masterWf | Add-Member -Force -NotePropertyName blocked_reason -NotePropertyValue ("parallel agent launch failed: " + $_.Exception.Message)
+      Save-MasterWorkflow; Append-Event 'parallel_agent_launch_failed' @{ subtask_id = $subId; error = $_.Exception.Message }
+      throw
     }
   } else {
     # Generate brief without pane launch
@@ -167,26 +212,12 @@ if (-not $SkipAgentLaunch) {
   $waitPrompt = "You are the deferred verification Agent for parallel workflow $Slug. Do not begin review until the workflow monitor merges all candidate branches into .worktrees/wf-$Slug-integration and wakes you. When awakened, use /code-review, verify 5 gates, and write result.md, verification.md, and outcome.json."
   try {
     $verObj = & $agentScript -Profile verification -DeferActivation -Name $verifierName -Category 'task' -Slug "$Slug-verify" -Prompt $waitPrompt -ProjectRoot $project -SessionName $targetSession -Direction down -HandoffDirectory $verifierHandoff | ConvertFrom-Json
-  } catch {}
+  } catch { $masterWf.state = 'blocked'; $masterWf.next_role = ''; $masterWf | Add-Member -Force -NotePropertyName blocked_reason -NotePropertyValue ("parallel verifier launch failed: " + $_.Exception.Message); Save-MasterWorkflow; Append-Event 'parallel_verifier_launch_failed' @{ error = $_.Exception.Message }; throw }
 }
 
-$masterWf = [ordered]@{
-  schema_version = 3
-  workflow_id = $wfId
-  mode = 'parallel_task'
-  slug = $Slug
-  session_name = $targetSession
-  project_root = $project
-  state = 'executing'
-  next_role = 'matrix_tasks'
-  repair_round = 0
-  max_repair_rounds = 2
-  created_at = (Get-Date -Format o)
-  updated_at = (Get-Date -Format o)
-  last_processed = [ordered]@{ task_outcome_hash = $null; verifier_outcome_hash = $null }
-  matrix = $matrixItems
-  git = $profile.git
-  verifier = [ordered]@{
+$masterWf.state = 'executing'
+$masterWf.matrix = $matrixItems
+$masterWf.verifier = [ordered]@{
     name = $verifierName
     original_agent_name = $verifierName
     active_agent_name = $verifierName
@@ -194,10 +225,8 @@ $masterWf = [ordered]@{
     brief = $verBrief
     result = $verResult
     outcome = $verOutcome
-  }
 }
-
-$masterWf | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $wfPath -Encoding utf8
+Save-MasterWorkflow
 
 # 3. Start Background Monitor
 $process = $null
@@ -205,7 +234,9 @@ if (-not $SkipMonitor) {
   $monitor = Join-Path $PSScriptRoot 'Monitor-HerdrWorkflow.ps1'
   $psHost = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
   $monitorArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -WorkflowPath `"$wfPath`""
-  $process = Start-Process -FilePath $psHost -ArgumentList $monitorArgs -WindowStyle Hidden -PassThru
+  try { $process = Start-Process -FilePath $psHost -ArgumentList $monitorArgs -WindowStyle Hidden -PassThru } catch {
+    $masterWf.state='blocked';$masterWf.next_role='';$masterWf|Add-Member -Force -NotePropertyName blocked_reason -NotePropertyValue ("monitor launch failed: " + $_.Exception.Message);Save-MasterWorkflow;Append-Event 'parallel_monitor_launch_failed' @{error=$_.Exception.Message};throw
+  }
 }
 
 Write-Host "`n╔═════════════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
@@ -217,4 +248,3 @@ Write-Host "║  Session Name    : $targetSession" -ForegroundColor DarkCyan
 Write-Host "╚═════════════════════════════════════════════════════════════════════════╝`n" -ForegroundColor Cyan
 
 return $wfPath
-

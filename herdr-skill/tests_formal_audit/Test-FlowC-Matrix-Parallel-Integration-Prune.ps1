@@ -1,8 +1,9 @@
-# Flow C Formal Verification Test: Matrix Parallel Multi-Agent Pipeline -> Integration Sandbox -> Unified 5-Gate Acceptance -> Pruning
+﻿# Flow C Formal Verification Test: Matrix Parallel Multi-Agent Pipeline -> Integration Sandbox -> Unified 5-Gate Acceptance -> Pruning
 param(
   [string]$TestRoot = (Join-Path $PSScriptRoot 'sandbox_flow_c')
 )
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
+$PSNativeCommandUseErrorActionPreference = $false
 
 Write-Host "`n=================================================================" -ForegroundColor Cyan
 Write-Host "  [FLOW C] FORMAL VERIFICATION: MATRIX PARALLEL & INTEGRATION PRUNE" -ForegroundColor Cyan

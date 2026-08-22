@@ -1,6 +1,6 @@
 # Setup and runtime
 
-Run `npx plogr-workflow` at a project root to select task, verification, and research profiles. It writes `herdr/dispatch-profile.json` and then runs `npx skills@latest add mattpocock/skills`.
+Run `plogr init` at a project root to select task, verification, and research profiles. It writes `herdr/dispatch-profile.json` and registers the bundled project skills without invoking `npx skills`.
 
 The init wrapper is installed by `scripts/Install-HerdrInitCommand.ps1` for PowerShell/CMD and the current WSL Bash account. It forwards non-`init` commands to the official Herdr executable. Re-run the installer after changing wrapper logic; open a new terminal after installation.
 

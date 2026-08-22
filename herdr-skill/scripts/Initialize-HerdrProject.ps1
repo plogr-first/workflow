@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [string]$ProjectRoot = (Get-Location).Path,
   [string]$RootCauseKind,
@@ -31,7 +31,7 @@ if ($Help) {
 Herdr Project Initialization
 
 Run from a project root:
-  npx plogr-workflow
+  plogr init
 
 The interactive flow selects root-cause, task, verification, and research agents, validates
 their terminal executables, installs official mattpocock/skills, verifies the engineering skill hashes,
@@ -200,11 +200,24 @@ function Get-SupportedKinds {
 function Get-OpenCodeModels {
   $models = [System.Collections.Generic.List[string]]::new()
 
-  # 1. Dynamically read custom models from ~/.config/opencode/opencode.jsonc and opencode.json
+  # 1. Dynamically execute `opencode models` CLI to get live registered models
+  try {
+    $cliModels = @((& opencode models 2>$null) -replace "`e\[[0-9;]*m", '' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('-') })
+    foreach ($cm in $cliModels) {
+      if ($cm -match '^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$' -and -not $models.Contains($cm)) {
+        $models.Add($cm)
+      }
+    }
+  } catch {}
+
+  # 2. Dynamically read custom models from ~/.config/opencode/opencode.jsonc and opencode.json
   $configPaths = @(
     (Join-Path $env:USERPROFILE '.config\opencode\opencode.jsonc'),
     (Join-Path $env:USERPROFILE '.config\opencode\opencode.json'),
-    (Join-Path $env:APPDATA 'opencode\opencode.json')
+    (Join-Path $env:USERPROFILE '.opencode\opencode.json'),
+    (Join-Path $env:USERPROFILE '.opencode\opencode.jsonc'),
+    (Join-Path $env:APPDATA 'opencode\opencode.json'),
+    (Join-Path $env:LOCALAPPDATA 'opencode\opencode.json')
   )
 
   foreach ($cfg in $configPaths) {
@@ -232,12 +245,27 @@ function Get-OpenCodeModels {
     }
   }
 
-  # 2. Add mainstream standard official models
+  # 3. Add mainstream standard official models and Go/Zen/Pixel fallbacks
   $standardModels = @(
+    'opencode-go/deepseek-v4-flash',
+    'opencode-go/gpt-5.6-luna',
+    'opencode-go/qwen3.8-max',
+    'opencode-go/kimi-k2.7-code',
+    'opencode-go/glm-5.3',
+    'opencode-go/deepseek-v4-pro',
+    'opencode-go/grok-4.5',
+    'opencode-go/mimo-v2.5',
+    'opencode-go/minimax-m3',
+    'pixel/gpt-5.6-sol',
+    'pixel/gpt-5.6-Terra',
+    'pixel/gpt-5.6-Luna',
+    'opencode/deepseek-v4-flash-free',
+    'opencode/hy3-free',
+    'opencode/big-pickle',
+    'deepseek/deepseek-chat',
+    'deepseek/deepseek-reasoner',
     'anthropic/claude-3-7-sonnet',
     'anthropic/claude-3-5-sonnet',
-    'deepseek/deepseek-reasoner',
-    'deepseek/deepseek-chat',
     'openai/o3-mini',
     'openai/o1',
     'openai/gpt-4o',
@@ -256,6 +284,14 @@ function Get-OpenCodeModels {
 
 function Resolve-OpenCodeModel([string]$Requested, [string[]]$Models) {
   $aliases = @{
+    'zen'='opencode/deepseek-v4-flash-free'; 'zen-free'='opencode/deepseek-v4-flash-free'; 'deepseek-v4-flash-free'='opencode/deepseek-v4-flash-free'
+    'go'='opencode-go/deepseek-v4-flash'; 'go-flash'='opencode-go/deepseek-v4-flash'; 'deepseek-v4-flash'='opencode-go/deepseek-v4-flash'
+    'go-pro'='opencode-go/deepseek-v4-pro'; 'flash'='opencode-go/deepseek-v4-flash'
+    'sol'='pixel/gpt-5.6-sol'; 'terra'='pixel/gpt-5.6-Terra'; 'luna'='pixel/gpt-5.6-Luna'
+    'glm'='opencode-go/glm-5.3'; 'glm-5.3'='opencode-go/glm-5.3'; 'glm-5.2'='opencode-go/glm-5.2'
+    'qwen'='opencode-go/qwen3.8-max'; 'qwen3.8'='opencode-go/qwen3.8-max'; 'qwen3.7'='opencode-go/qwen3.7-max'
+    'kimi'='opencode-go/kimi-k2.7-code'; 'kimi-code'='opencode-go/kimi-k2.7-code'; 'kimi-k3'='opencode-go/kimi-k3'
+    'grok'='opencode-go/grok-4.5'; 'mimo'='opencode-go/mimo-v2.5'; 'minimax'='opencode-go/minimax-m3'
     'claude-3-7'='anthropic/claude-3-7-sonnet'; 'claude-3-7-sonnet'='anthropic/claude-3-7-sonnet'; 'sonnet-3.7'='anthropic/claude-3-7-sonnet'
     'claude-3-5'='anthropic/claude-3-5-sonnet'; 'claude-3-5-sonnet'='anthropic/claude-3-5-sonnet'; 'sonnet-3.5'='anthropic/claude-3-5-sonnet'
     'r1'='deepseek/deepseek-reasoner'; 'reasoner'='deepseek/deepseek-reasoner'; 'deepseek-r1'='deepseek/deepseek-reasoner'
@@ -265,7 +301,6 @@ function Resolve-OpenCodeModel([string]$Requested, [string[]]$Models) {
     'gpt-4o'='openai/gpt-4o'; '4o'='openai/gpt-4o'
     'gemini-pro'='google/gemini-2.5-pro'; 'gemini-2.5-pro'='google/gemini-2.5-pro'
     'gemini-flash'='google/gemini-2.0-flash'; 'gemini-2.0-flash'='google/gemini-2.0-flash'
-    'sol'='pixel/gpt-5.6-sol'; 'terra'='pixel/gpt-5.6-Terra'; 'luna'='pixel/gpt-5.6-Luna'
   }
   $key = $Requested.Trim().ToLowerInvariant(); if($aliases.ContainsKey($key)){$key=$aliases[$key]}
   $exact=@($Models|Where-Object{$_.Equals($key,[StringComparison]::OrdinalIgnoreCase)}); if($exact.Count -eq 1){return $exact[0]}
@@ -275,29 +310,41 @@ function Resolve-OpenCodeModel([string]$Requested, [string[]]$Models) {
 
 function Select-OpenCodeModelInteractive([string]$Role, [string[]]$Models) {
   $chineseMap = @{
-    'anthropic/claude-3-7-sonnet' = 'Claude 3.7 Sonnet (思考模式: Max 推荐)'
-    'anthropic/claude-3-5-sonnet' = 'Claude 3.5 Sonnet'
-    'deepseek/deepseek-reasoner'  = 'DeepSeek R1 / Reasoner (思考模式: Max 强推理)'
-    'deepseek/deepseek-chat'      = 'DeepSeek V3 / Chat 高速代码模型'
-    'openai/o3-mini'              = 'OpenAI o3-mini (思考模式: Max 编程推理)'
-    'openai/o1'                   = 'OpenAI o1 (思考模式: Max 复杂规划)'
-    'openai/gpt-4o'               = 'OpenAI GPT-4o 多模态旗舰模型'
-    'google/gemini-2.5-pro'       = 'Gemini 2.5 Pro (思考模式: Max 极长上下文)'
-    'google/gemini-2.0-flash'     = 'Gemini 2.0 Flash 极速响应模型'
-    'pixel/gpt-5.6-sol'           = 'Pixel / GPT-5.6 Sol (用户自定义 Provider)'
-    'pixel/gpt-5.6-Terra'         = 'Pixel / GPT-5.6 Terra (用户自定义 Provider)'
-    'pixel/gpt-5.6-Luna'          = 'Pixel / GPT-5.6 Luna (用户自定义 Provider)'
+    'opencode-go/deepseek-v4-flash'            = 'Go 专区 • DeepSeek V4 Flash 极速闪电推理'
+    'opencode-go/gpt-5.6-luna'                = 'Go 专区 • GPT-5.6 Luna 深度思考编程'
+    'opencode-go/qwen3.8-max'                 = 'Go 专区 • 通义千问 Qwen 3.8 Max 旗舰模型'
+    'opencode-go/kimi-k2.7-code'              = 'Go 专区 • Kimi K2.7 Code 长上下文代码模型'
+    'opencode-go/glm-5.3'                     = 'Go 专区 • 智谱 GLM 5.3 编程强化模型'
+    'opencode-go/deepseek-v4-pro'             = 'Go 专区 • DeepSeek V4 Pro 专家模型'
+    'opencode-go/grok-4.5'                    = 'Go 专区 • xAI Grok 4.5 极速模型'
+    'opencode-go/mimo-v2.5'                   = 'Go 专区 • Mimo V2.5 多模态模型'
+    'opencode-go/minimax-m3'                  = 'Go 专区 • MiniMax M3 旗舰模型'
+    'pixel/gpt-5.6-sol'                       = 'Pixel 专区 • GPT-5.6 Sol (用户自定义 Provider)'
+    'pixel/gpt-5.6-Terra'                     = 'Pixel 专区 • GPT-5.6 Terra (用户自定义 Provider)'
+    'pixel/gpt-5.6-Luna'                      = 'Pixel 专区 • GPT-5.6 Luna (用户自定义 Provider)'
+    'opencode/deepseek-v4-flash-free'         = 'Zen/Free 专区 • DeepSeek V4 Flash 免费加速'
+    'opencode/hy3-free'                       = 'Zen/Free 专区 • HY3 免费加速模型'
+    'opencode/big-pickle'                     = 'Zen/Free 专区 • Big-Pickle 免费模型'
+    'deepseek/deepseek-chat'                  = 'DeepSeek 官方 • V3 / Chat 高速代码模型'
+    'deepseek/deepseek-reasoner'              = 'DeepSeek 官方 • R1 / Reasoner 强推理'
+    'anthropic/claude-3-7-sonnet'             = 'Claude 官方 • 3.7 Sonnet 思考模式旗舰'
+    'anthropic/claude-3-5-sonnet'             = 'Claude 官方 • 3.5 Sonnet'
+    'openai/o3-mini'                          = 'OpenAI 官方 • o3-mini 编程推理'
+    'openai/o1'                               = 'OpenAI 官方 • o1 复杂规划'
+    'openai/gpt-4o'                           = 'OpenAI 官方 • GPT-4o 多模态旗舰'
+    'google/gemini-2.5-pro'                   = 'Google 官方 • Gemini 2.5 Pro 极长上下文'
+    'google/gemini-2.0-flash'                 = 'Google 官方 • Gemini 2.0 Flash 极速响应'
   }
   $options = @()
   foreach ($m in $Models) {
-    $desc = if ($chineseMap.ContainsKey($m)) { $chineseMap[$m] } elseif ($m -match '^pixel/') { "Pixel 自定义模型" } else { "OpenCode 兼容模型" }
+    $desc = if ($chineseMap.ContainsKey($m)) { $chineseMap[$m] } elseif ($m -match '^opencode-go/') { "Go 高速专区模型" } elseif ($m -match '^opencode/') { "Zen/Free 免费专区模型" } elseif ($m -match '^pixel/') { "Pixel 自定义模型" } else { "OpenCode 兼容模型" }
     $options += @{ Label = "$m  ($desc)"; Value = $m }
   }
   $options += @{ Label = "[+] 手动输入其他 OpenCode 模型 ID (provider/model-name)"; Value = '__CUSTOM__' }
 
-  $chosen = Select-InteractiveMenu -Title "配置 OpenCode 模型 ($Role)" -Subtitle "请选择此 Agent 节点底层的 LLM 大语言模型 (默认思考模式: Max)" -Options $options
+  $chosen = Select-InteractiveMenu -Title "配置 OpenCode 模型 ($Role)" -Subtitle "请选择此 Agent 节点底层的 LLM 大语言模型 (支持 Go / Zen / Pixel 自定义模型)" -Options $options
   if ($chosen -eq '__CUSTOM__') {
-    Write-Host "请输入 OpenCode 模型标识符 (例如 anthropic/claude-3-7-sonnet 或 provider/model):" -ForegroundColor Cyan
+    Write-Host "请输入 OpenCode 模型标识符 (例如 opencode-go/deepseek-v4-flash 或 pixel/gpt-5.6-sol):" -ForegroundColor Cyan
     $customModel = (Read-Host "模型 ID").Trim()
     if (-not $customModel) { throw "OpenCode 模型 ID 不能为空。" }
     return $customModel
@@ -351,7 +398,7 @@ function Install-HerdrSkills([string]$Project, [string[]]$TargetAgents, [bool]$S
     return
   }
 
-  $agentArgs = if ($TargetAgents -and $TargetAgents.Count) {
+  $agentArgs = if ($null -ne $TargetAgents) {
     ($TargetAgents | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) | ForEach-Object {
       switch ($_.ToLowerInvariant()) {
         'claude' { 'claude-code' }
@@ -376,6 +423,12 @@ This file is a progressive-disclosure skill index.
 Read this local skill before taking action:
 
 - [Karpathy Guidelines](./.agents/skills/karpathy-guidelines/SKILL.md)
+
+## Master Orchestrator skill
+
+Trigger with `/plogr` (or `/herdr`) to dispatch durable multi-agent workflows:
+
+- [Plogr Multi-Agent Orchestrator](./.agents/skills/plogr/SKILL.md)
 
 ## Conditional skills
 
@@ -405,35 +458,110 @@ Do not load all skills at once. After loading a skill, read its ``references/`` 
   $bundledSkillsDir = Join-Path $PSScriptRoot '..\bundled_skills'
   $workflowSkillsDir = Join-Path (Split-Path (Split-Path $PSScriptRoot)) '.agents\skills'
 
-  $skillNames = @('karpathy-guidelines', 'task-agent', 'bugfix-agent', 'research-agent', 'verification-agent', 'audit-suite')
+  $skillNames = @('plogr', 'herdr', 'karpathy-guidelines', 'task-agent', 'bugfix-agent', 'research-agent', 'verification-agent', 'audit-suite')
+  $excludedPayloadNames = @('node_modules', '.git', 'tests_formal_audit')
+  function Copy-SkillPayload([string]$Source, [string]$Destination) {
+    # Core skill destinations are managed deployment targets. Recreate them so
+    # stale files from older payload layouts (especially the herdr alias) cannot
+    # remain executable after an upgrade. This never touches project rules or
+    # files outside the skill destination.
+    if (Test-Path -LiteralPath $Destination) {
+      Remove-Item -LiteralPath $Destination -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    Get-ChildItem -LiteralPath $Source -Force | Where-Object { $excludedPayloadNames -notcontains $_.Name } | ForEach-Object {
+      Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
+    }
+  }
   Write-Host "Deploying bundled progressive workflow skills to project & agent directories..." -ForegroundColor Cyan
 
   foreach ($s in $skillNames) {
-    $srcPath = Join-Path $bundledSkillsDir $s
-    if (-not (Test-Path -LiteralPath $srcPath) -and (Test-Path -LiteralPath $workflowSkillsDir)) {
-      $srcPath = Join-Path $workflowSkillsDir $s
+    # plogr/herdr are this package itself.  Prefer the canonical package root
+    # even when a stale bundled copy happens to exist.
+    if ($s -eq 'plogr') {
+      $srcPath = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    } else {
+      $srcPath = Join-Path $bundledSkillsDir $s
+      if (-not (Test-Path -LiteralPath $srcPath) -and (Test-Path -LiteralPath $workflowSkillsDir)) {
+        $srcPath = Join-Path $workflowSkillsDir $s
+      }
     }
     if (Test-Path -LiteralPath $srcPath) {
-      $destinations = @(
-        (Join-Path $Project ".agents\skills\$s"),
-        (Join-Path $env:USERPROFILE ".agents\skills\$s")
-      )
+      $destinations = @((Join-Path $Project ".agents\skills\$s"))
       foreach ($ag in $agentArgs) {
-        if ($ag -eq 'claude-code' -or $ag -eq '*') { $destinations += Join-Path $Project ".claude\skills\$s" }
-        if ($ag -eq 'codex' -or $ag -eq '*') { $destinations += Join-Path $Project ".codex\skills\$s" }
+        if ($ag -eq 'agents_only') { continue }
+        if ($ag -eq 'claude-code' -or $ag -eq '*') {
+          $destinations += Join-Path $Project ".claude\skills\$s"
+        }
+        if ($ag -eq 'codex' -or $ag -eq '*') {
+          $destinations += Join-Path $Project ".codex\skills\$s"
+        }
         if ($ag -eq 'opencode' -or $ag -eq '*') { $destinations += Join-Path $Project ".opencode\skills\$s" }
         if ($ag -eq 'cursor' -or $ag -eq '*') { $destinations += Join-Path $Project ".cursor\skills\$s" }
         if ($ag -eq 'gemini' -or $ag -eq '*') { $destinations += Join-Path $Project ".gemini\skills\$s" }
       }
+      $copyFailures = [System.Collections.Generic.List[string]]::new()
       foreach ($dest in ($destinations | Select-Object -Unique)) {
         try {
           if (-not (Test-Path -LiteralPath $dest)) {
             New-Item -ItemType Directory -Force -Path $dest | Out-Null
           }
-          Copy-Item -Path "$srcPath\*" -Destination $dest -Recurse -Force
-        } catch {}
+          Copy-SkillPayload $srcPath $dest
+        } catch { $copyFailures.Add("${dest}: $($_.Exception.Message)") }
+      }
+  if ($copyFailures.Count) { throw "Skill '$s' deployment failed:`n$($copyFailures -join "`n")" }
+    }
+  }
+
+  # The directory layout is native discovery for Claude/OpenCode/Gemini. This
+  # manifest makes registration explicit and gives the dispatcher a durable
+  # integrity contract instead of treating an arbitrary folder as a skill.
+  $registrationPath = Join-Path $Project '.agents\project-skills.json'
+  $platformRoots = [ordered]@{
+    agents   = (Join-Path $Project '.agents\skills')
+    claude   = (Join-Path $Project '.claude\skills')
+    codex    = (Join-Path $Project '.codex\skills')
+    opencode = (Join-Path $Project '.opencode\skills')
+    gemini   = (Join-Path $Project '.gemini\skills')
+    cursor   = (Join-Path $Project '.cursor\skills')
+  }
+  $registrations = foreach ($platform in $platformRoots.Keys) {
+    $root = $platformRoots[$platform]
+    if (Test-Path -LiteralPath $root) {
+      $registeredSkills = @($skillNames | Where-Object { Test-Path -LiteralPath (Join-Path (Join-Path $root $_) 'SKILL.md') })
+      $files = foreach ($skill in $registeredSkills) {
+        Get-ChildItem -LiteralPath (Join-Path $root $skill) -File -Recurse | Sort-Object FullName | ForEach-Object {
+          [ordered]@{
+            relative_path = $_.FullName.Substring($root.Length).TrimStart('\')
+            sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+        }
+      }
+      [ordered]@{
+        platform = $platform
+        relative_root = (Resolve-Path -LiteralPath $root).Path.Substring($Project.Length).TrimStart('\')
+        skills = $registeredSkills
+        files = @($files)
+        discovery = 'project_native'
       }
     }
+  }
+  [ordered]@{ schema_version = 2; generated_at = (Get-Date -Format o); registry = '.agents/skills.json'; hash_algorithm = 'SHA256'; registrations = @($registrations) } |
+    ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $registrationPath -Encoding utf8
+
+  # 3. Deploy project-level .agents/skills.json for explicit Antigravity/Gemini project skill registration
+  $skillsJsonPath = Join-Path $Project '.agents\skills.json'
+  if (-not (Test-Path -LiteralPath $skillsJsonPath)) {
+    $skillsJsonContent = @"
+{
+  "entries": [
+    {
+      "path": ".agents/skills"
+    }
+  ]
+}
+"@
+    Set-Content -LiteralPath $skillsJsonPath -Value $skillsJsonContent -Encoding utf8
   }
 }
 
@@ -576,9 +704,10 @@ function Assert-TerminalAgent([string]$Kind, [string[]]$SupportedKinds) {
   if ($SupportedKinds -notcontains $Kind.ToLowerInvariant()) {
     throw "'$Kind' is not a Herdr-supported kind. Supported kinds: $($SupportedKinds -join ', ')"
   }
+  $npmLauncher = Join-Path (Join-Path $env:APPDATA 'npm') "$Kind.cmd"
   $command = Get-Command -Name $Kind -CommandType Application,ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1
-  if (-not $command) { throw "Herdr kind '$Kind' has no terminal executable named '$Kind' in PATH." }
-  $executable = [string]$command.Path
+  if (-not $command -and -not (Test-Path -LiteralPath $npmLauncher -PathType Leaf)) { throw "Herdr kind '$Kind' has no terminal executable named '$Kind' in PATH." }
+  $executable = if (Test-Path -LiteralPath $npmLauncher -PathType Leaf) { $npmLauncher } else { [string]$command.Path }
   $version = @(& $executable --version 2>&1)
   if ($LASTEXITCODE -ne 0) { $version = @(& $executable -v 2>&1) }
   if ($LASTEXITCODE -ne 0) { throw "Terminal executable '$Kind' could not be validated with --version or -v." }
@@ -679,7 +808,7 @@ if (-not $targetAgents -and $interactiveSetup) {
   $targetAgents = switch ($chosenSkillTarget) {
     'configured' { $configuredAgents }
     'all' { @('*') }
-    'agents_only' { @() }
+    'agents_only' { @('agents_only') }
     default { @($chosenSkillTarget) }
   }
 }
@@ -700,10 +829,12 @@ $profile = [ordered]@{
   task_agent = $task
   verification_agent = $verification
   research_agent = $research
-  target_skill_agents = if($targetAgents){@($targetAgents)}else{@('*')}
+  target_skill_agents = if($null -ne $targetAgents){@($targetAgents)}else{@('*')}
+  project_skill_registry = '.agents/project-skills.json'
+  project_skill_registry_required = $true
   mattpocock_skills = $mattpockSkills
   git = $git
-  skills_install_command = 'npx skills@latest add mattpocock/skills'
+  skills_install_command = 'plogr init'
 }
 $profile | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $profilePath -Encoding utf8
 

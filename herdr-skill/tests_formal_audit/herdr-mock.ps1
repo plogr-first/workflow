@@ -1,4 +1,4 @@
-# Test Mock Herdr Engine
+﻿# Test Mock Herdr Engine
 # Provides deterministic simulation of Herdr CLI for formal audit
 
 $allArgs = [System.Collections.Generic.List[string]]::new()

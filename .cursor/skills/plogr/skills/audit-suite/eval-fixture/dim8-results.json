@@ -1,0 +1,34 @@
+{
+  "date": "2026-06-27",
+  "fixture": "eval-fixture/order-submit",
+  "prompt": "/audit-suite 全局扫一遍，看代码和 OpenAPI、功能文档是否对齐，有什么 bug。先不要改代码。",
+  "eval_mode": "full_test",
+  "ground_truth": ["GT-1 backend quantity BUG", "GT-2 frontend total_amount DRIFT"],
+  "runs": [
+    {
+      "config": "with_skill",
+      "skill_path": "audit-suite/SKILL.md v1.2.0",
+      "dim8_score": 10,
+      "found_gt": ["GT-1", "GT-2"],
+      "suggested_api_additions": false,
+      "edited_files": false,
+      "stopped_for_user": true,
+      "findings_count": 2,
+      "notes": "Correct categories, file:line, no add-field trap, 🛑 STOP"
+    },
+    {
+      "config": "baseline",
+      "skill_path": null,
+      "dim8_score": 9,
+      "found_gt": ["GT-1", "GT-2"],
+      "suggested_api_additions": false,
+      "edited_files": false,
+      "stopped_for_user": false,
+      "findings_count": 2,
+      "notes": "Same root bugs found; missing explicit STOP; slightly loose line refs"
+    }
+  ],
+  "winner": "with_skill",
+  "delta_dim8": 1,
+  "judge_summary": "Both agents avoided the main trap (suggest adding total_amount to API). Skill wins on process: STOP gate, DRIFT fix direction explicit, structured finding IDs."
+}

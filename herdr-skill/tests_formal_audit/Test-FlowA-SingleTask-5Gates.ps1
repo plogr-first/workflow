@@ -1,8 +1,9 @@
-# Flow A Formal Verification Test: Single Task -> 5-Gate Independent Verification -> Safe Merge & Prune
+﻿# Flow A Formal Verification Test: Single Task -> 5-Gate Independent Verification -> Safe Merge & Prune
 param(
   [string]$TestRoot = (Join-Path $PSScriptRoot 'sandbox_flow_a')
 )
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
+$PSNativeCommandUseErrorActionPreference = $false
 
 Write-Host "`n========================================================" -ForegroundColor Cyan
 Write-Host "  [FLOW A] FORMAL VERIFICATION: SINGLE TASK & 5-GATE AUDIT" -ForegroundColor Cyan

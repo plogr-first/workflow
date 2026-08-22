@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [string]$Kind,
   [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9_-]{0,31}$')][string]$Name,
@@ -17,13 +17,31 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 function Resolve-OpenCodeModel([string]$Requested) {
-  $aliases = @{ 'zen'='opencode/deepseek-v4-flash-free'; 'zen-free'='opencode/deepseek-v4-flash-free'; 'deepseek-v4-flash-free'='opencode/deepseek-v4-flash-free'; 'go'='opencode-go/deepseek-v4-flash'; 'go-flash'='opencode-go/deepseek-v4-flash'; 'deepseek-v4-flash'='opencode-go/deepseek-v4-flash' }
+  $aliases = @{
+    'zen'='opencode/deepseek-v4-flash-free'; 'zen-free'='opencode/deepseek-v4-flash-free'; 'deepseek-v4-flash-free'='opencode/deepseek-v4-flash-free'
+    'go'='opencode-go/deepseek-v4-flash'; 'go-flash'='opencode-go/deepseek-v4-flash'; 'deepseek-v4-flash'='opencode-go/deepseek-v4-flash'
+    'go-pro'='opencode-go/deepseek-v4-pro'; 'flash'='opencode-go/deepseek-v4-flash'
+    'sol'='pixel/gpt-5.6-sol'; 'terra'='pixel/gpt-5.6-Terra'; 'luna'='pixel/gpt-5.6-Luna'
+    'glm'='opencode-go/glm-5.3'; 'glm-5.3'='opencode-go/glm-5.3'; 'glm-5.2'='opencode-go/glm-5.2'
+    'qwen'='opencode-go/qwen3.8-max'; 'qwen3.8'='opencode-go/qwen3.8-max'; 'qwen3.7'='opencode-go/qwen3.7-max'
+    'kimi'='opencode-go/kimi-k2.7-code'; 'kimi-code'='opencode-go/kimi-k2.7-code'; 'kimi-k3'='opencode-go/kimi-k3'
+    'grok'='opencode-go/grok-4.5'; 'mimo'='opencode-go/mimo-v2.5'; 'minimax'='opencode-go/minimax-m3'
+    'claude-3-7'='anthropic/claude-3-7-sonnet'; 'claude-3-7-sonnet'='anthropic/claude-3-7-sonnet'; 'sonnet-3.7'='anthropic/claude-3-7-sonnet'
+    'claude-3-5'='anthropic/claude-3-5-sonnet'; 'claude-3-5-sonnet'='anthropic/claude-3-5-sonnet'; 'sonnet-3.5'='anthropic/claude-3-5-sonnet'
+    'r1'='deepseek/deepseek-reasoner'; 'reasoner'='deepseek/deepseek-reasoner'; 'deepseek-r1'='deepseek/deepseek-reasoner'
+    'deepseek'='deepseek/deepseek-chat'; 'deepseek-v3'='deepseek/deepseek-chat'; 'chat'='deepseek/deepseek-chat'
+    'o3-mini'='openai/o3-mini'; 'o3'='openai/o3-mini'
+    'o1'='openai/o1'; 'o1-preview'='openai/o1'
+    'gpt-4o'='openai/gpt-4o'; '4o'='openai/gpt-4o'
+    'gemini-pro'='google/gemini-2.5-pro'; 'gemini-2.5-pro'='google/gemini-2.5-pro'
+    'gemini-flash'='google/gemini-2.0-flash'; 'gemini-2.0-flash'='google/gemini-2.0-flash'
+  }
   $key = $Requested.Trim().ToLowerInvariant()
   if ($aliases.ContainsKey($key)) { return $aliases[$key] }
   if ($key -match '^[a-z0-9_-]+/[a-z0-9._-]+$') { return $Requested.Trim() }
   $models = @()
   try {
-    $models = @((& opencode models 2>$null) -replace "`e\[[0-9;]*m", '' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $models = @((& opencode models 2>$null) -replace "`e\[[0-9;]*m", '' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('-') })
   } catch { }
   if (-not $models.Count) { return $Requested.Trim() }
   $match = @($models | Where-Object { $_.Equals($key,[System.StringComparison]::OrdinalIgnoreCase) })
@@ -74,7 +92,7 @@ $skillManifest = $null
 if ($Profile) {
   if ($Kind) { throw 'Use either -Kind or -Profile, not both.' }
   $profilePath = Join-Path $project 'herdr\dispatch-profile.json'
-  if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw "Herdr dispatch profile not found: $profilePath. Run 'npx plogr-workflow' from the project root first." }
+ if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw "Herdr dispatch profile not found: $profilePath. Run 'plogr init' from the project root first." }
   try { $dispatchProfile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json } catch { throw "Invalid Herdr dispatch profile: $profilePath" }
   if (-not $script:HerdrSession) { $script:HerdrSession = [string]$dispatchProfile.herdr_session.name }
   if ([string]::IsNullOrWhiteSpace($script:HerdrSession)) { throw "Herdr profile is missing herdr_session.name: $profilePath. Session must be strictly specified." }
@@ -100,7 +118,7 @@ if ($Access -eq 'full' -and $profileNativeArgs.Count) {
     'gemini' { if($Access -eq 'full'){$nativeArgs+='--yolo'}else{$nativeArgs+=@('--approval-mode','plan')} }
     'codex' { if($Access -eq 'full'){$nativeArgs+='--dangerously-bypass-approvals-and-sandbox'}else{$nativeArgs+=@('-s','workspace-write','-a','on-request')} }
     'opencode' { if($Access -eq 'full'){$nativeArgs+='--auto'} }
-    default { if($Access -eq 'full'){throw "Custom Herdr kind '$Kind' requires a project profile with full_access_args. Run 'npx plogr-workflow'."}else{throw "Plan mode is not defined for custom Herdr kind '$Kind'."} }
+ default { if($Access -eq 'full'){throw "Custom Herdr kind '$Kind' requires a project profile with full_access_args. Run 'plogr init'."}else{throw "Plan mode is not defined for custom Herdr kind '$Kind'."} }
   }
 }
 if ($Kind -eq 'opencode' -and $OpenCodeModel) { $OpenCodeModel=Resolve-OpenCodeModel $OpenCodeModel; $nativeArgs+=@('-m',$OpenCodeModel) }
@@ -197,7 +215,7 @@ You are the verification and integration agent. Use the official mattpocock `/co
 "@ }
   'root_cause' { @"
 You are the root-cause analysis and bugfix execution agent. Follow the mandatory 3-step pipeline:
-(1) [PHASE 1 - READ-ONLY STATIC AUDIT & TRIAGE (只读审计与分诊)]: First execute the global `C:\Users\Lenovo\.agents\skills\audit-suite` skill in read-only audit mode.
+(1) [PHASE 1 - READ-ONLY STATIC AUDIT & TRIAGE (只读审计与分诊)]: First execute the registered project `audit-suite` skill resolved through `.agents/project-skills.json` in read-only audit mode.
     - STRICT READ-ONLY PRINCIPLE (只读不改代码原则): You are strictly forbidden from modifying any production code during the audit phase.
     - AUDIT REPORT REQUIREMENTS (诊断报告必须标明定位与机理): The generated audit report (`.audit/AUDIT-REPORT-*.md` / `FIX-TASK`) MUST explicitly document:
       1. Exact Bug Location: Specific file path, line number range, and function/seam name.
@@ -210,7 +228,7 @@ $gitContract Before editing, make the mandatory worktree decision. Return `candi
 "@ }
   default { if ($Category -eq 'bugfix') { @"
 You are the root-cause analysis and bugfix execution agent. Follow the mandatory 3-step pipeline:
-(1) [PHASE 1 - READ-ONLY STATIC AUDIT & TRIAGE (只读审计与分诊)]: First execute the global `C:\Users\Lenovo\.agents\skills\audit-suite` skill in read-only audit mode.
+(1) [PHASE 1 - READ-ONLY STATIC AUDIT & TRIAGE (只读审计与分诊)]: First execute the registered project `audit-suite` skill resolved through `.agents/project-skills.json` in read-only audit mode.
     - STRICT READ-ONLY PRINCIPLE (只读不改代码原则): You are strictly forbidden from modifying any production code during the audit phase.
     - AUDIT REPORT REQUIREMENTS (诊断报告必须标明定位与机理): The generated audit report (`.audit/AUDIT-REPORT-*.md` / `FIX-TASK`) MUST explicitly document:
       1. Exact Bug Location: Specific file path, line number range, and function/seam name.
@@ -321,7 +339,8 @@ Do not report completion only in the TUI.
   }
   [pscustomobject]@{name=$Name;pane_id=$pane;handoff=$handoff;brief=$briefPath;result=$resultPath;outcome=$outcomePath;progress=$progressPath;status=$statusPath;watcher_pid=$watchPid;deferred=[bool]$DeferActivation}|ConvertTo-Json -Depth 4
 } catch {
-  [pscustomobject]@{failed_at=(Get-Date -Format o);error=$_.Exception.Message;pane_id=$pane;agent_detected=($null-ne $agent)}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $handoff 'failure.json') -Encoding utf8
-  if($pane -and -not $agent){try { Invoke-HerdrJson @('pane','close',$pane) | Out-Null } catch { }}
+  $cleanupError = $null
+  if($pane){try { Invoke-HerdrJson @('pane','close',$pane) | Out-Null } catch { $cleanupError = $_.Exception.Message }}
+  [pscustomobject]@{failed_at=(Get-Date -Format o);error=$_.Exception.Message;pane_id=$pane;agent_detected=($null-ne $agent);cleanup_attempted=[bool]$pane;cleanup_error=$cleanupError}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $handoff 'failure.json') -Encoding utf8
   throw
 }

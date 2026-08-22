@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [string]$WorkflowId,
   [string]$ProjectRoot = (Get-Location).Path,
@@ -11,7 +11,7 @@ if ($FromBash) { $env:HERDR_ENV='1' }
 if ($env:HERDR_ENV -ne '1') { throw 'HERDR_ENV is not 1. Run herdr resume from a Herdr-managed pane.' }
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $profilePath = Join-Path $project 'herdr\dispatch-profile.json'
-if (-not (Test-Path -LiteralPath $profilePath)) { throw "Herdr dispatch profile not found: $profilePath. Run 'npx plogr-workflow' first." }
+ if (-not (Test-Path -LiteralPath $profilePath)) { throw "Herdr dispatch profile not found: $profilePath. Run 'plogr init' first." }
 $profile = Get-Content $profilePath -Raw | ConvertFrom-Json
 $boundSession = [string]$profile.herdr_session.name
 if ($SessionName -and $SessionName -ne $boundSession) { throw "Project is bound to Herdr session '$boundSession', not '$SessionName'." }
@@ -26,7 +26,26 @@ if ($items.Count -gt 1 -and -not $All) {
 function Save-Workflow($Workflow,[string]$Path) { $tmp="$Path.$([guid]::NewGuid().ToString('N')).tmp"; $Workflow.updated_at=(Get-Date -Format o); $Workflow|ConvertTo-Json -Depth 20|Set-Content $tmp -Encoding utf8; Move-Item $tmp $Path -Force }
 function Event([string]$Path,[string]$Name,[hashtable]$Fields=@{}) { $e=[ordered]@{at=(Get-Date -Format o);event=$Name};foreach($k in $Fields.Keys){$e[$k]=$Fields[$k]};($e|ConvertTo-Json -Compress)|Add-Content (Join-Path (Split-Path $Path) 'events.jsonl') -Encoding utf8 }
 function Agent-Live([string]$Name) {
-  try { $old=$ErrorActionPreference; $ErrorActionPreference='Continue'; & herdr --session $session agent get $Name 2>$null | Out-Null; $code=$LASTEXITCODE; $ErrorActionPreference=$old; return ($code -eq 0) } catch { $ErrorActionPreference=$old; return $false }
+  try { $old=$ErrorActionPreference; $ErrorActionPreference='Continue'; $raw=@(& herdr --session $session agent get $Name 2>$null); $code=$LASTEXITCODE; $ErrorActionPreference=$old; if($code -ne 0 -or -not $raw){return $false}; $agent=(($raw -join "`n")|ConvertFrom-Json).result.agent; return ([string]$agent.agent_status -in @('working','running','planning','awaiting_input')) } catch { $ErrorActionPreference=$old; return $false }
+}
+function Ensure-MatrixAgents($Workflow,[string]$WorkflowPath) {
+  if (-not $Workflow.matrix) { return }
+  $launcher = Join-Path $PSScriptRoot 'Start-HerdrAgent.ps1'
+  $changed = $false
+  foreach ($sub in $Workflow.matrix) {
+    $subAgentIsLive = Agent-Live ([string]$sub.agent_name)
+    if ([string]$sub.status -eq 'candidate' -or $subAgentIsLive) { continue }
+    $oldName = [string]$sub.agent_name; $generation = 1; if($oldName -match '-r(\d+)$'){$generation=[int]$Matches[1]+1}
+    $suffix = "-r$generation"; $base = $oldName; if(($base.Length+$suffix.Length)-gt 32){$base=$base.Substring(0,[Math]::Max(1,32-$suffix.Length))}; $newName="$base$suffix"
+    $prompt = "This is a post-reboot replacement for parallel workflow $($Workflow.workflow_id), subtask $($sub.id). Continue only this subtask in $($sub.worktree_path), preserve branch $($sub.branch), read existing handoff files in $($sub.handoff), and write $($sub.result) plus $($sub.outcome) when complete."
+    try {
+      $replacement = & $launcher -Profile task -Name $newName -Category task -Slug ([string]$sub.slug) -Prompt $prompt -ProjectRoot ([string]$sub.worktree_path) -HandoffDirectory ([string]$sub.handoff) -SessionName $session | ConvertFrom-Json
+      $sub.agent_name = $replacement.name; $sub.status='executing'; $changed=$true; Event $WorkflowPath 'matrix_agent_restarted_after_reboot' @{subtask_id=$sub.id;agent=$replacement.name}
+    } catch {
+      $Workflow.state='blocked';$Workflow.next_role='';$Workflow|Add-Member -Force -NotePropertyName blocked_reason -NotePropertyValue ("matrix agent replacement failed for $($sub.id): " + $_.Exception.Message);Save-Workflow $Workflow $WorkflowPath;Event $WorkflowPath 'workflow_blocked' @{reason='matrix_replacement_agent_failed';subtask_id=$sub.id};throw
+    }
+  }
+  if($changed){$Workflow.matrix=$Workflow.matrix;Save-Workflow $Workflow $WorkflowPath}
 }
 function Ensure-Agent($Workflow,[string]$Role,[string]$WorkflowPath) {
   $entry = if($Role -eq 'task'){$Workflow.task}else{$Workflow.verifier}; $name=[string]$entry.name
@@ -60,6 +79,7 @@ foreach($wf in $items) {
   $path=($workflowFiles | Where-Object { try { ((Get-Content $_.FullName -Raw | ConvertFrom-Json).workflow_id -eq $wf.workflow_id) } catch { $false } } | Select-Object -First 1).FullName
   if(-not $path){continue}
   if($wf.next_role -in @('task','verification')){ Ensure-Agent $wf ([string]$wf.next_role) $path }
+  if($wf.mode -eq 'parallel_task' -and $wf.next_role -eq 'matrix_tasks'){ Ensure-MatrixAgents $wf $path }
   $monitor=Join-Path $PSScriptRoot 'Monitor-HerdrWorkflow.ps1'
   $psHost = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
   1..3 | ForEach-Object { & $psHost -NoProfile -ExecutionPolicy Bypass -File $monitor -WorkflowPath $path -Once; Start-Sleep -Milliseconds 200 }

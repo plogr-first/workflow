@@ -1,11 +1,12 @@
-# Formal Verification Test Suite Master Runner
+﻿# Formal Verification Test Suite Master Runner
 $ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
 
 Write-Host ""
-Write-Host "╔═══════════════════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║  🛡️  HERDR MULTI-AGENT ORCHESTRATOR — AEROSPACE-GRADE FORMAL AUDIT SUITE       ║" -ForegroundColor Cyan
-Write-Host "║      Zero-Tolerance Full-Lifecycle State Machine Verification & Stress Test   ║" -ForegroundColor Cyan
-Write-Host "╚═══════════════════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "===========================================================================" -ForegroundColor Cyan
+Write-Host "HERDR MULTI-AGENT ORCHESTRATOR - FORMAL AUDIT SUITE" -ForegroundColor Cyan
+Write-Host "Full lifecycle state-machine verification and stress test" -ForegroundColor Cyan
+Write-Host "===========================================================================" -ForegroundColor Cyan
 Write-Host ""
 
 $startTime = Get-Date
@@ -30,7 +31,7 @@ foreach ($suite in $testSuites) {
   } catch {
     $status = 'FAIL'
     $errorMsg = $_.Exception.Message
-    Write-Host "❌ Suite Failed: $errorMsg" -ForegroundColor Red
+    Write-Host "FAIL: Suite failed: $errorMsg" -ForegroundColor Red
   }
   $duration = ((Get-Date) - $suiteStart).TotalMilliseconds
   $results.Add([pscustomobject]@{
@@ -44,15 +45,15 @@ foreach ($suite in $testSuites) {
 $totalDuration = ((Get-Date) - $startTime).TotalSeconds
 
 Write-Host ""
-Write-Host "═══════════════════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "===========================================================================" -ForegroundColor Cyan
 Write-Host "  FORMAL VERIFICATION & STRESS TEST SUMMARY REPORT" -ForegroundColor Cyan
-Write-Host "═══════════════════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "===========================================================================" -ForegroundColor Cyan
 Write-Host ""
 
 foreach ($r in $results) {
   $color = if ($r.Status -eq 'PASS') { 'Green' } else { 'Red' }
-  $symbol = if ($r.Status -eq 'PASS') { '✔' } else { '✖' }
-  Write-Host ("  {0} [{1}] {2} ({3} ms)" -f $symbol, $r.Status, $r.Suite, $r.DurationMs) -ForegroundColor $color
+  $symbol = if ($r.Status -eq 'PASS') { 'PASS' } else { 'FAIL' }
+  Write-Host ("  [{0}] {1} ({2} ms)" -f $symbol, $r.Suite, $r.DurationMs) -ForegroundColor $color
   if ($r.Error) {
     Write-Host ("      Error: {0}" -f $r.Error) -ForegroundColor Red
   }
@@ -62,9 +63,9 @@ $allPassed = @($results | Where-Object { $_.Status -ne 'PASS' }).Count -eq 0
 Write-Host "`nTotal Test Execution Time: $([Math]::Round($totalDuration, 2))s" -ForegroundColor Cyan
 
 if ($allPassed) {
-  Write-Host ">>> ZERO-TOLERANCE AUDIT RESULT: 100% PASS (ZERO DEFECTS DETECTED) <<<`n" -ForegroundColor Green
+  Write-Host ">>> FORMAL AUDIT RESULT: PASS <<<`n" -ForegroundColor Green
   exit 0
 } else {
-  Write-Host ">>> ZERO-TOLERANCE AUDIT RESULT: FAILED <<<`n" -ForegroundColor Red
+  Write-Host ">>> FORMAL AUDIT RESULT: FAILED <<<`n" -ForegroundColor Red
   exit 1
 }

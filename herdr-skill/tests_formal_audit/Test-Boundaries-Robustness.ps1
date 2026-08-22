@@ -1,8 +1,9 @@
-# Boundary & Fault Injection Formal Verification Test Suite
+﻿# Boundary & Fault Injection Formal Verification Test Suite
 param(
   [string]$TestRoot = (Join-Path $PSScriptRoot 'sandbox_boundaries')
 )
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
+$PSNativeCommandUseErrorActionPreference = $false
 
 Write-Host "`n=================================================================" -ForegroundColor Cyan
 Write-Host "  [BOUNDARIES] FORMAL VERIFICATION: PATH, CONCURRENCY, JSON & GH" -ForegroundColor Cyan
@@ -249,6 +250,14 @@ Set-Content -LiteralPath (Join-Path $ghTestDir 'file.txt') -Value "v2" -Encoding
 
 # Setup remote pointing to GitHub
 & git -C $ghTestDir remote add origin https://github.com/mock-org/mock-repo.git
+# Keep the GitHub fetch URL used by the PR command, but give this offline test a
+# real local push destination.  This verifies the required feature-branch push
+# instead of treating a network failure as a successful PR publication.
+$ghPushRemote = Join-Path $TestRoot 'gh_test_remote.git'
+& git init --bare $ghPushRemote 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "ASSERTION FAILED: Unable to create local Git push remote for GitHub CLI test" }
+& git -C $ghTestDir remote set-url --push origin $ghPushRemote
+if ($LASTEXITCODE -ne 0) { throw "ASSERTION FAILED: Unable to configure local Git push remote for GitHub CLI test" }
 
 $ghHandoffDir = Join-Path $ghTestDir 'verifier'
 New-Item -ItemType Directory -Force -Path $ghHandoffDir | Out-Null

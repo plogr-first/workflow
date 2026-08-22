@@ -1,0 +1,33 @@
+name: Windows formal workflow tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  formal-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Verify publish payload
+        run: npm run pack:check
+      - name: Verify skill and runtime contract
+        shell: powershell
+        run: npm run test:contract
+      - name: Verify project skill registry manifest
+        shell: powershell
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'plogr-registry-fixture'
+          New-Item -ItemType Directory -Force -Path $fixture | Out-Null
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Initialize-HerdrProject.ps1 `
+            -ProjectRoot $fixture -RootCauseKind claude -TaskKind codex `
+            -VerificationKind claude -ResearchKind codex -HerdrSessionName ci `
+            -SkillTargetAgents '*' -SkipGitInit
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Test-HerdrSkillRegistry.ps1 `
+            -ProjectRoot $fixture
+      - name: Run Windows PowerShell formal suite
+        shell: powershell
+        run: npm test

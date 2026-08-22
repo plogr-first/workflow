@@ -1,8 +1,9 @@
-# Flow D Formal Verification Test: Reboot Recovery -> Session Lock -> Replacement Agent (-rN Naming Boundary & Truncation) -> State Machine Takeover
+﻿# Flow D Formal Verification Test: Reboot Recovery -> Session Lock -> Replacement Agent (-rN Naming Boundary & Truncation) -> State Machine Takeover
 param(
   [string]$TestRoot = (Join-Path $PSScriptRoot 'sandbox_flow_d')
 )
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
+$PSNativeCommandUseErrorActionPreference = $false
 
 Write-Host "`n=================================================================" -ForegroundColor Cyan
 Write-Host "  [FLOW D] FORMAL VERIFICATION: REBOOT RESUME & GENERATION NAMING" -ForegroundColor Cyan

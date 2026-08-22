@@ -8,6 +8,12 @@ Read this local skill before taking action:
 
 - [Karpathy Guidelines](./.agents/skills/karpathy-guidelines/SKILL.md)
 
+## Master Orchestrator skill
+
+Trigger with /plogr (or /herdr) to dispatch durable multi-agent workflows:
+
+- [Plogr Multi-Agent Orchestrator](./.agents/skills/plogr/SKILL.md)
+
 ## Conditional skills
 
 Load only the skill matching the active task:

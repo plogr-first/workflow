@@ -52,11 +52,11 @@ Verification gates:
 
 On pass, verifier confirms target tree is clean and at expected base, merges safely, runs applicable post-merge verification, records merge SHA, and emits `merged`. Never force reset, clean, stash, or overwrite unrelated changes.
 
-`npx plogr-workflow` runs `git init` by default only when the project is not already a Git repository. It never creates the first project-wide commit, configures a remote, or publishes code without user direction. It adds `herdr/` and `.worktrees/` to `.gitignore` for a newly initialized repository.
+`plogr init` runs `git init` by default only when the project is not already a Git repository. It never creates the first project-wide commit, configures a remote, or publishes code without user direction. It adds `herdr/` and `.worktrees/` to `.gitignore` for a newly initialized repository.
 
 ### GitHub Integration & Submission with GitHub CLI (`gh`)
 
-All GitHub interactions (repository lookup, authentication verification, PR creation, CI checks, issue management, and remote publishing) MUST use the official GitHub CLI (`gh`) instead of browser links or raw unauthenticated commands:
+Use the official GitHub CLI (`gh`) for GitHub authentication, repository lookup, PR/issue operations, and CI checks. Use Git for local commits, worktrees, branch objects, and the actual branch push:
 - **`push_policy: after_merge`**: The workflow monitor runs `git push <remote> <target-branch>` after a successful local merge, verified through `gh auth status` when target is a GitHub remote.
 - **`push_policy: create_pr`**: The workflow monitor uses `gh pr create --repo <remote-url> --base <target-branch> --title <title> --body <body>` to create an authenticated Pull Request on GitHub.
 - **CI / Action Inspection**: Verification agents use `gh pr checks` and `gh run list` / `gh run view` to inspect CI pipelines.
@@ -67,7 +67,7 @@ All GitHub interactions (repository lookup, authentication verification, PR crea
 Use `Mode bugfix`.
 
 **Audit-First & Root-Cause Pipeline**:
-1. **Audit Phase (只读审计与分诊)**: The Root-Cause Agent MUST first execute the global `C:\Users\Lenovo\.agents\skills\audit-suite` skill in **strict read-only mode** (no source code edits permitted). The generated audit report (`.audit/AUDIT-REPORT-*.md` / `FIX-TASK`) must explicitly pinpoint:
+1. **Audit Phase (只读审计与分诊)**: The Root-Cause Agent MUST first execute the project-registered `audit-suite` skill declared in `.agents/project-skills.json` in **strict read-only mode** (no source code edits permitted). The generated audit report (`.audit/AUDIT-REPORT-*.md` / `FIX-TASK`) must explicitly pinpoint:
    - **Exact Bug Location**: Specific file path, line range, and function/seam.
    - **Root Cause Mechanism**: Detailed explanation of *why* and *how* current logic/timing/state machine causes the bug.
 2. **Diagnosis Phase (红灯复现证伪环)**: Use `mattpocock/diagnosing-bugs` to build and run a narrow, red-capable reproduction script for the reported symptom. It MUST fail (RED 🔴) on unpatched code. If no red-capable loop exists, emit `blocked`; do not ship a guess-based patch.
@@ -81,6 +81,6 @@ A verifier reports only reproducible P0/P1 blockers, maximum five. Every item st
 
 ## Durable resume and session identity
 
-`npx plogr-workflow` binds a project profile to one named Herdr session. Every formal `workflow.json` records that session, a unique workflow ID, task/verifier Agent names, current role, and repair round. `herdr resume` only considers unfinished workflows in the bound project/session. It reads `events.jsonl`, handoff files, progress files, and Git/worktree state; it never infers identity from a pane title or chat history. If the recorded Agent is gone, it starts a replacement generation and updates the workflow state before continuing. Multiple resumable workflows require an explicit workflow ID or `--all`. Terminal states are never reactivated.
+`plogr init` binds a project profile to one named Herdr session. Every formal `workflow.json` records that session, a unique workflow ID, task/verifier Agent names, current role, and repair round. `herdr resume` only considers unfinished workflows in the bound project/session. It reads `events.jsonl`, handoff files, progress files, and Git/worktree state; it never infers identity from a pane title or chat history. If the recorded Agent is gone, it starts a replacement generation and updates the workflow state before continuing. Multiple resumable workflows require an explicit workflow ID or `--all`. Terminal states are never reactivated.
 
 All engineering skills (`audit-suite`, `diagnosing-bugs`, `implement`, `tdd`, `code-review`, `research`) are formal local Agent Skills containing a `SKILL.md` rulebook. Agents MUST NOT guess or treat these as casual words; before executing a phase that requires a skill, the Agent must read and strictly follow the workflow steps defined in the corresponding `SKILL.md`. Research uses `/research`; task execution uses `/implement`, `/tdd` at confirmed seams, then `/code-review`; bugfix uses `audit-suite` (read-only), `/diagnosing-bugs` (red loop), `/tdd`, then `/code-review`; verification uses `/code-review` against the fixed point `base_sha...candidate_sha`. `/code-review` is independent review, not the merge authority: the verifier separately runs the Herdr acceptance and API-contract gates before integration. A missing required skill is a blocker, never an assumed pass.

@@ -1,8 +1,9 @@
-# Flow B Formal Verification Test: Bugfix Audit Triage -> Gate Rejection -> Repair Loop -> Knowledge Auto-Harvesting
+﻿# Flow B Formal Verification Test: Bugfix Audit Triage -> Gate Rejection -> Repair Loop -> Knowledge Auto-Harvesting
 param(
   [string]$TestRoot = (Join-Path $PSScriptRoot 'sandbox_flow_b')
 )
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
+$PSNativeCommandUseErrorActionPreference = $false
 
 Write-Host "`n=================================================================" -ForegroundColor Cyan
 Write-Host "  [FLOW B] FORMAL VERIFICATION: BUGFIX REPAIR & KNOWLEDGE HARVEST" -ForegroundColor Cyan

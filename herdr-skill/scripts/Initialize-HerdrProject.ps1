@@ -626,9 +626,19 @@ function Get-MattpockSkills([string]$Project) {
 }
 
 function Get-GitSetup([string]$Project, [bool]$AllowInit, [string]$RequestedPolicy, [string]$RequestedRemote, [bool]$Interactive) {
-  $isGit = (& git -c core.quotepath=false -C $Project rev-parse --is-inside-work-tree 2>$null)
+  # A fresh portable checkout has no .git yet. PowerShell 5.1/7 can promote
+  # native git's stderr into a terminating error even when redirected, so treat
+  # the probe as data instead of letting it abort initialization.
+  $isGit = $null
+  $probeExit = 0
+  try {
+    $isGit = (& git -c core.quotepath=false -C $Project rev-parse --is-inside-work-tree 2>$null)
+    $probeExit = $LASTEXITCODE
+  } catch {
+    $probeExit = 1
+  }
   $initialized = $false
-  if ($LASTEXITCODE -ne 0 -or [string]$isGit -ne 'true') {
+  if ($probeExit -ne 0 -or [string]$isGit -ne 'true') {
     if (-not $AllowInit) {
       return [ordered]@{ repository = $false; initialized_by_herdr = $false; has_commit = $false; target_branch = $null; push_policy = 'manual'; push_remote = $null; remotes = @(); use_gh_cli = $false; github = $null }
     }
@@ -636,9 +646,17 @@ function Get-GitSetup([string]$Project, [bool]$AllowInit, [string]$RequestedPoli
     if ($LASTEXITCODE -ne 0) { throw "Unable to initialize Git repository in $Project." }
     $initialized = $true
   }
-  $head = (& git -c core.quotepath=false -C $Project rev-parse --verify HEAD 2>$null)
-  $hasCommit = ($LASTEXITCODE -eq 0)
-  $branch = if ($hasCommit) { (& git -c core.quotepath=false -C $Project rev-parse --abbrev-ref HEAD 2>$null) } else { $null }
+  $head = $null
+  $hasCommit = $false
+  try {
+    $head = (& git -c core.quotepath=false -C $Project rev-parse --verify HEAD 2>$null)
+    $hasCommit = ($LASTEXITCODE -eq 0)
+  } catch {
+    $hasCommit = $false
+  }
+  $branch = if ($hasCommit) {
+    try { (& git -c core.quotepath=false -C $Project rev-parse --abbrev-ref HEAD 2>$null) } catch { $null }
+  } else { $null }
   $remotes = @((& git -c core.quotepath=false -C $Project remote 2>$null) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
   $hasGh = [bool](Get-Command -Name 'gh' -CommandType Application,ExternalScript -ErrorAction SilentlyContinue)
   $policy = if ($RequestedPolicy) { $RequestedPolicy } else { 'manual' }

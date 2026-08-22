@@ -469,17 +469,12 @@ function installGlobalPlogr() {
     const launcherJs = `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
-const { spawn } = require("child_process");
-
 const localCli = "${currentCliPath}";
 if (fs.existsSync(localCli)) {
   require(localCli);
 } else {
-  const child = spawn("npx", ["plogr-workflow", ...process.argv.slice(2)], {
-    stdio: "inherit",
-    shell: true
-  });
-  child.on("exit", (code) => process.exit(code ?? 0));
+  console.error("plogr 本地 CLI 不存在。请从仓库运行其 herdr-skill/bin/cli.js；此工作流只使用仓库内运行时。");
+  process.exit(1);
 }
 `;
 
@@ -502,7 +497,8 @@ basedir=$(dirname "$0")
 if [ -f "$basedir/plogr-cli.js" ]; then
   exec node "$basedir/plogr-cli.js" "$@"
 else
-  exec npx plogr-workflow "$@"
+  echo "plogr 本地 CLI 不存在。请从仓库运行 herdr-skill/bin/cli.js；此工作流只使用仓库内运行时。" >&2
+  exit 1
 fi
 `;
 
@@ -533,7 +529,7 @@ installGlobalPlogr();
 const cliArgs = process.argv.slice(2);
 const firstArg = cliArgs[0] ? cliArgs[0].toLowerCase() : null;
 
-// Determine if CLI was invoked as `plogr-workflow` (e.g. `npx plogr-workflow`) vs `plogr`
+// Determine if CLI was invoked as `plogr-workflow` vs `plogr`
 const scriptBase = path.basename(process.argv[1] || "", path.extname(process.argv[1] || "")).toLowerCase();
 const isWorkflowInvoked = scriptBase.includes("plogr-workflow") || 
   process.env.npm_lifecycle_event === "plogr-workflow" || 
@@ -798,7 +794,7 @@ if (firstArg === 'prune') {
 
 // 6. Initialize / Configuration Mode:
 // Triggered if:
-//  - Invoked via `npx plogr-workflow` (with or without arguments)
+//  - Invoked via the local `plogr-workflow` launcher (with or without arguments)
 //  - Explicitly called as `plogr init`
 //  - Flags like `--root-cause`, `--task`, `--session` are passed
 const isInit = isWorkflowInvoked || firstArg === 'init' || (Boolean(firstArg) && firstArg.startsWith('-'));

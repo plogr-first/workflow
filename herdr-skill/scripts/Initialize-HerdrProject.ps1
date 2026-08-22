@@ -796,6 +796,26 @@ function Select-Agent([string]$RoleTitle, [string]$RoleKey, [string]$RequestedKi
   }
 }
 
+# Herdr invokes agents through PowerShell Start-Process using the bare name.
+# On Windows the npm POSIX shim named `codex` is not a Win32 executable, so
+# prefer an installed native codex.exe directory while preserving all PATH
+# entries (including Anaconda).
+function Ensure-HerdrWindowsAgentPath([string[]]$Kinds) {
+  if ($env:OS -ne 'Windows_NT' -or $Kinds -notcontains 'codex') { return }
+  $native = Get-Command -Name 'codex.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $native -or -not (Test-Path -LiteralPath $native.Source -PathType Leaf)) {
+    Write-Warning 'Herdr codex.exe native launcher was not found; Herdr agent start may fail until one is installed.'
+    return
+  }
+  $nativeDir = Split-Path -Parent $native.Source
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $entries = @($userPath -split ';' | Where-Object { $_ -and $_.Trim() -and $_ -ne $nativeDir })
+  [Environment]::SetEnvironmentVariable('Path', ($nativeDir + ';' + ($entries -join ';')), 'User')
+  $currentEntries = @($env:Path -split ';' | Where-Object { $_ -and $_.Trim() -and $_ -ne $nativeDir })
+  $env:Path = ($nativeDir + ';' + ($currentEntries -join ';'))
+  Write-Host "  Herdr native launcher path: $nativeDir (existing PATH preserved)" -ForegroundColor DarkCyan
+}
+
 # --- Main Execution Flow ---
 Show-HerdrBanner
 
@@ -809,6 +829,7 @@ $rootCause = Select-Agent '根因分析与审查 Agent (Root-Cause & Audit)' 'ro
 $task = Select-Agent '任务开发与实现 Agent (Task & Implementation)' 'task' $TaskKind $TaskOpenCodeModel $TaskFullAccessArgs $TaskCommand $supportedKinds
 $verification = Select-Agent '代码验收与合并 Agent (Verification & Integration)' 'verification' $VerificationKind $VerificationOpenCodeModel $VerificationFullAccessArgs $VerificationCommand $supportedKinds
 $research = Select-Agent '深度调研与探索 Agent (Deep Research)' 'research' $ResearchKind $ResearchOpenCodeModel $ResearchFullAccessArgs $ResearchCommand $supportedKinds
+Ensure-HerdrWindowsAgentPath @($rootCause.kind, $task.kind, $verification.kind, $research.kind)
 
 # Interactive Skill Target Agents Selection
 $configuredAgents = @($rootCause.kind, $task.kind, $verification.kind, $research.kind) | Select-Object -Unique

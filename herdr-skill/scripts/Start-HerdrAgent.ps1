@@ -76,6 +76,16 @@ function Start-AgentWhenPaneReady([string]$Pane,[string[]]$NativeArgs) {
     if ($NativeArgs.Count) { $command += '--'; $command += $NativeArgs }
     $attempt = Invoke-HerdrJson $command
     if ($attempt.exit -eq 0 -and $attempt.json.result.agent.interactive_ready -and $attempt.json.result.agent.agent -eq $Kind -and @('blocked','error') -notcontains [string]$attempt.json.result.agent.agent_status) { return $attempt.json.result.agent }
+    # Claude Code may pause on its one-time workspace trust dialog. It is safe
+    # to accept only when the visible pane explicitly contains the confirmation
+    # prompt; otherwise leave the agent untouched and surface the real error.
+    try {
+      $visible = (& herdr --session $script:HerdrSession pane read $Pane --source recent --lines 40 2>$null) -join "`n"
+      if ($visible -match 'Enter to confirm|Yes, I trust this folder') {
+        & herdr --session $script:HerdrSession pane send-keys $Pane enter 2>$null | Out-Null
+        if ((Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 1000; continue }
+      }
+    } catch { }
     if ([string]$attempt.json.error.code -in @('agent_pane_busy','agent_pane_not_ready','pane_busy','pane_not_ready','shell_not_ready') -or $attempt.exit -ne 0) {
       if ((Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 750; continue }
     }

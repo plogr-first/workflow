@@ -92,9 +92,7 @@ try {
   if (-not $task.name -or -not $task.outcome) { throw 'Task Agent dispatch did not return a durable handoff.' }
   $task | Add-Member -Force -NotePropertyName original_agent_name -NotePropertyValue ([string]$task.name)
   $task | Add-Member -Force -NotePropertyName active_agent_name -NotePropertyValue ([string]$task.name)
-  if ($task.status -and (Test-Path -LiteralPath ([string]$task.status))) {
-    try { $workflow.routing.task_kind = [string]((Get-Content $task.status -Raw | ConvertFrom-Json).kind) } catch { }
-  }
+  $workflow.routing.task_kind = if ($task.kind) { [string]$task.kind } else { $null }
   $workflow.task = $task
   Write-AtomicJson $workflow $workflowPath
   $waitPrompt = "You are the deferred verification Agent for workflow $Mode/$Slug. Do not begin review and do not write result.md until the workflow monitor wakes you with the candidate handoff path. When awakened, use the configured official mattpocock /code-review skill and write result.md, verification.md, and outcome.json."
@@ -102,12 +100,7 @@ try {
   if (-not $verifier.name -or -not $verifier.outcome) { throw 'Verification Agent dispatch did not return a durable handoff.' }
   $verifier | Add-Member -Force -NotePropertyName original_agent_name -NotePropertyValue ([string]$verifier.name)
   $verifier | Add-Member -Force -NotePropertyName active_agent_name -NotePropertyValue ([string]$verifier.name)
-  if ($verifier.status -and (Test-Path -LiteralPath ([string]$verifier.status))) {
-    try { $workflow.routing.verifier_kind = [string]((Get-Content $verifier.status -Raw | ConvertFrom-Json).kind) } catch { }
-  }
-  if ([string]::IsNullOrWhiteSpace([string]$workflow.routing.task_kind) -or [string]::IsNullOrWhiteSpace([string]$workflow.routing.verifier_kind)) {
-    throw 'Role routing evidence is missing: task/verifier status did not record the configured agent kind.'
-  }
+  $workflow.routing.verifier_kind = if ($verifier.kind) { [string]$verifier.kind } else { $null }
   $workflow.verifier = $verifier
   $workflow.state = 'executing'
   Write-AtomicJson $workflow $workflowPath

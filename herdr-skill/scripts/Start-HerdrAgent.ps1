@@ -294,6 +294,8 @@ Do not report completion only in the TUI.
   if ($SkipAgentLaunch) {
     return [ordered]@{
       name = $Name
+      kind = $Kind
+      profile = $Profile
       handoff = $handoff
       brief = $briefPath
       result = $resultPath
@@ -347,7 +349,7 @@ Do not report completion only in the TUI.
     $watch=Start-Process -FilePath $psHost -ArgumentList $watchArgs -WindowStyle Hidden -PassThru
     $watchPid=$watch.Id
   }
-  [pscustomobject]@{name=$Name;pane_id=$pane;handoff=$handoff;brief=$briefPath;result=$resultPath;outcome=$outcomePath;progress=$progressPath;status=$statusPath;watcher_pid=$watchPid;deferred=[bool]$DeferActivation}|ConvertTo-Json -Depth 4
+  [pscustomobject]@{name=$Name;kind=$Kind;profile=$Profile;pane_id=$pane;handoff=$handoff;brief=$briefPath;result=$resultPath;outcome=$outcomePath;progress=$progressPath;status=$statusPath;watcher_pid=$watchPid;deferred=[bool]$DeferActivation}|ConvertTo-Json -Depth 4
 } catch {
   $cleanupError = $null
   if($pane){try { Invoke-HerdrJson @('pane','close',$pane) | Out-Null } catch { $cleanupError = $_.Exception.Message }}

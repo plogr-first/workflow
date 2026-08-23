@@ -232,7 +232,11 @@ function Agent-Live([string]$Name) {
     $code=$LASTEXITCODE; $ErrorActionPreference=$old
     if ($code -ne 0 -or -not $raw) { return $false }
     $agent = (($raw -join "`n") | ConvertFrom-Json).result.agent
-    return ([string]$agent.agent_status -in @('working','running','planning','awaiting_input'))
+    # `idle` is a healthy, interactive terminal state. It means the agent is
+    # waiting for the next prompt, not that it disappeared. Treating idle as
+    # unavailable caused false blocked workflows during normal handoffs.
+    if (-not $agent -or $agent.interactive_ready -ne $true) { return $false }
+    return ([string]$agent.agent_status -notin @('blocked','error','unknown'))
   } catch {
     $ErrorActionPreference=$old; return $false
   }
@@ -416,7 +420,18 @@ try {
         break
       }
     } elseif ($workflow.next_role -eq 'verification' -and $taskOutcome -and ($taskOutcome.state -eq 'candidate' -or ($workflow.mode -eq 'research' -and $taskOutcome.state -eq 'passed')) -and $workflow.last_processed.task_outcome_hash -ne $taskHash) {
-      $msg="Wake-up: read $($workflow.task.result), $taskOutcomePath and the configured official mattpocock /code-review skill, fixed at the candidate base SHA. Verify API docs/OpenAPI, backend routes/validation, generated client/types, and actual endpoint behavior when applicable. Write $($workflow.verifier.result), verification.md, and $verOutcomePath. Use merged only after safe merge and post-merge checks; use fix_required only for reproducible P0/P1 blockers."
+      $expectedVerifierKind = if ($workflow.routing -and $workflow.routing.verifier_kind) { [string]$workflow.routing.verifier_kind } else { $null }
+      $verifierStatusKind = $null
+      if ($workflow.verifier.status -and (Test-Path -LiteralPath ([string]$workflow.verifier.status))) {
+        try { $verifierStatusKind = [string]((Get-Content ([string]$workflow.verifier.status) -Raw | ConvertFrom-Json).kind) } catch { }
+      }
+      if ($expectedVerifierKind -and $verifierStatusKind -and $expectedVerifierKind -ne $verifierStatusKind) {
+        Save-State $workflow 'blocked' ''
+        Append-Event 'workflow_blocked' @{reason='role_routing_mismatch';expected=$expectedVerifierKind;actual=$verifierStatusKind}
+        Notify "Herdr: 角色路由不一致（期望 $expectedVerifierKind，实际 $verifierStatusKind），已停止而非伪造交接" ([string]$workflow.verifier.result) 'request'
+        break
+      }
+      $msg="Wake-up: you are the configured $expectedVerifierKind verification agent. Read $($workflow.task.result), $taskOutcomePath and the configured official mattpocock /code-review skill, fixed at the candidate base SHA. Verify API docs/OpenAPI, backend routes/validation, generated client/types, and actual endpoint behavior when applicable. Write $($workflow.verifier.result), verification.md, and $verOutcomePath. Use merged only after safe merge and post-merge checks; use fix_required only for reproducible P0/P1 blockers."
       Prompt-Agent ([string]$workflow.verifier.name) $msg $workflow.verifier; $workflow.last_processed.task_outcome_hash=$taskHash; Save-State $workflow 'verifying' 'verification'; Append-Event 'verification_woken' @{agent=$workflow.verifier.name}; Notify "Herdr: $($workflow.verifier.name) 已唤醒验收" ([string]$workflow.verifier.result)
     } elseif ($workflow.next_role -eq 'task' -and $taskOutcome -and ($taskOutcome.state -eq 'candidate' -or ($workflow.mode -eq 'research' -and $taskOutcome.state -eq 'passed')) -and @('executing','repairing') -contains [string]$workflow.state) {
       Save-State $workflow 'candidate' 'verification'

@@ -70,6 +70,7 @@ $workflow = [ordered]@{
   schema_version = 3; workflow_id = "wf-$stamp-$Slug"; mode = $Mode; slug = $Slug; session_name = $session; project_root = $project; git = $git; required_skills = $requiredSkills
   state = 'initializing'; next_role = 'task'; repair_round = 0; max_repair_rounds = 2; recovery_attempts = [ordered]@{ task = 0; verification = 0; max = 2 }; created_at = (Get-Date -Format o); updated_at = (Get-Date -Format o)
   last_processed = [ordered]@{ task_outcome_hash = $null; verifier_outcome_hash = $null }
+  routing = [ordered]@{ task_profile = $taskProfile; task_kind = $null; verifier_profile = 'verification'; verifier_kind = $null; handoff = 'task -> configured verification agent' }
   task = $null; verifier = $null
 }
 function Write-AtomicJson($Value, [string]$Path) {
@@ -91,6 +92,9 @@ try {
   if (-not $task.name -or -not $task.outcome) { throw 'Task Agent dispatch did not return a durable handoff.' }
   $task | Add-Member -Force -NotePropertyName original_agent_name -NotePropertyValue ([string]$task.name)
   $task | Add-Member -Force -NotePropertyName active_agent_name -NotePropertyValue ([string]$task.name)
+  if ($task.status -and (Test-Path -LiteralPath ([string]$task.status))) {
+    try { $workflow.routing.task_kind = [string]((Get-Content $task.status -Raw | ConvertFrom-Json).kind) } catch { }
+  }
   $workflow.task = $task
   Write-AtomicJson $workflow $workflowPath
   $waitPrompt = "You are the deferred verification Agent for workflow $Mode/$Slug. Do not begin review and do not write result.md until the workflow monitor wakes you with the candidate handoff path. When awakened, use the configured official mattpocock /code-review skill and write result.md, verification.md, and outcome.json."
@@ -98,6 +102,12 @@ try {
   if (-not $verifier.name -or -not $verifier.outcome) { throw 'Verification Agent dispatch did not return a durable handoff.' }
   $verifier | Add-Member -Force -NotePropertyName original_agent_name -NotePropertyValue ([string]$verifier.name)
   $verifier | Add-Member -Force -NotePropertyName active_agent_name -NotePropertyValue ([string]$verifier.name)
+  if ($verifier.status -and (Test-Path -LiteralPath ([string]$verifier.status))) {
+    try { $workflow.routing.verifier_kind = [string]((Get-Content $verifier.status -Raw | ConvertFrom-Json).kind) } catch { }
+  }
+  if ([string]::IsNullOrWhiteSpace([string]$workflow.routing.task_kind) -or [string]::IsNullOrWhiteSpace([string]$workflow.routing.verifier_kind)) {
+    throw 'Role routing evidence is missing: task/verifier status did not record the configured agent kind.'
+  }
   $workflow.verifier = $verifier
   $workflow.state = 'executing'
   Write-AtomicJson $workflow $workflowPath

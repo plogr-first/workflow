@@ -35,7 +35,10 @@ function Get-AgentSnapshot {
 while ((Get-Date) -lt $deadline) {
   $agent = Get-AgentSnapshot
   if (-not $agent) { Start-Sleep -Seconds $PollSeconds; continue }
-  if ($agent.agent_status -eq 'working') { $observedWork = $true }
+  # A fast agent can complete before the first poll observes `working`. An
+  # interactive idle/done agent is still proof that startup succeeded; only a
+  # missing or blocked agent should be treated as unavailable.
+  if ($agent.interactive_ready -eq $true -and $agent.agent_status -in @('working','idle','done')) { $observedWork = $true }
   if ($agent.agent_status -eq 'blocked') {
     Notify "Herdr: $AgentName 需要处理" "Agent 被阻塞；请检查 $StatusPath" 'request'
     exit 0

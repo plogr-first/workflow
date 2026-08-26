@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
   [string]$Kind,
   [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9_-]{0,31}$')][string]$Name,
@@ -81,7 +81,7 @@ function Start-AgentWhenPaneReady([string]$Pane,[string[]]$NativeArgs) {
     # prompt; otherwise leave the agent untouched and surface the real error.
     try {
       $visible = (& herdr --session $script:HerdrSession pane read $Pane --source recent --lines 40 2>$null) -join "`n"
-      if ($visible -match 'Enter to confirm|Yes, I trust this folder') {
+      if ($visible -match 'Enter to confirm|Yes, I trust this folder|Yes, continue|Press enter to continue') {
         & herdr --session $script:HerdrSession pane send-keys $Pane enter 2>$null | Out-Null
         if ((Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 1000; continue }
       }

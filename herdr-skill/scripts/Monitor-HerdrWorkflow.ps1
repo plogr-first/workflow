@@ -253,7 +253,32 @@ function Agent-Live([string]$Name) {
     $ErrorActionPreference=$old; return $false
   }
 }
-function Acquire-Lease {
+function Get-AgentStatus([string]$Name) {
+  try {
+    $rawStatus = @(& herdr --session $script:Session agent get $Name 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $rawStatus) { return $null }
+    return [string](($rawStatus -join "`n" | ConvertFrom-Json).result.agent.agent_status)
+  } catch { return $null }
+}
+function Start-VerificationFallback($Workflow, [string]$Reason) {
+  $old = $Workflow.verifier
+  $suffix = '-fallback-codex'; $base = [string]$old.name
+  if (($base.Length + $suffix.Length) -gt 32) { $base = $base.Substring(0, [Math]::Max(1, 32 - $suffix.Length)) }
+  $newName = "$base$suffix"
+  $launcher = Join-Path $PSScriptRoot 'Start-HerdrAgent.ps1'
+  $prompt = "Fallback verification for workflow $($Workflow.workflow_id). The configured verifier became terminal without durable artifacts ($Reason). Independently review $($Workflow.task.result) and $($Workflow.task.outcome); validate the candidate and write $($old.result), verification.md, and $($old.outcome). Use merged only after post-merge checks; fix_required only for reproducible P0/P1 blockers."
+  $replacement = & $launcher -Kind codex -Name $newName -Category task -Slug ([string]$Workflow.slug) -Prompt $prompt -ProjectRoot ([string]$Workflow.project_root) -SessionName $script:Session -HandoffDirectory ([string]$old.handoff) | ConvertFrom-Json
+  foreach ($prop in @('name','pane_id','handoff','brief','result','outcome','progress','status')) {
+    $value = if ($replacement.$prop) { $replacement.$prop } else { $old.$prop }
+    if ($old.psobject.Properties[$prop]) { $old.$prop = $value } else { $old | Add-Member -NotePropertyName $prop -NotePropertyValue $value }
+  }
+  if ($old.psobject.Properties['kind']) { $old.kind='codex' } else { $old | Add-Member -NotePropertyName kind -NotePropertyValue 'codex' }
+  $Workflow.verifier = $old
+  if (-not $Workflow.routing) { $Workflow | Add-Member -NotePropertyName routing -NotePropertyValue ([ordered]@{}) }
+  $Workflow.routing | Add-Member -Force -NotePropertyName verifier_kind -NotePropertyValue 'codex'
+  $Workflow.routing | Add-Member -Force -NotePropertyName verifier_fallback -NotePropertyValue ([ordered]@{from='opencode';to='codex';reason=$Reason;at=(Get-Date -Format o)})
+  return $newName
+}function Acquire-Lease {
   if (Test-Path -LiteralPath $lockPath) {
     try {
       $old = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
@@ -294,7 +319,7 @@ try {
   $workflow = Read-Workflow; $script:Session = [string]$workflow.session_name
   if ([string]::IsNullOrWhiteSpace($script:Session)) { throw 'workflow.json is missing session_name.' }
   $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
-  $missingTaskTicks=0; $missingVerifierTicks=0; $missingMatrixTicks=0
+  $missingTaskTicks=0; $missingVerifierTicks=0; $missingMatrixTicks=0; $unproductiveVerifierTicks=0
   do {
     Renew-Lease; $workflow = Read-Workflow
     Write-WorkflowHeartbeat 'monitoring' $workflow
@@ -425,7 +450,17 @@ try {
 
     if ($workflow.next_role -eq 'task' -and $workflow.task -and -not (Agent-Live ([string]$workflow.task.name))) { $missingTaskTicks++ } else { $missingTaskTicks=0 }
     if ($workflow.next_role -eq 'verification' -and $workflow.verifier -and -not (Agent-Live ([string]$workflow.verifier.name))) { $missingVerifierTicks++ } else { $missingVerifierTicks=0 }
-    if ($missingTaskTicks -ge 10 -or $missingVerifierTicks -ge 10) {
+    # A terminal verifier with no durable handoff is a delivery failure, not a completed review.
+    $verifierRuntimeStatus = if ($workflow.next_role -eq 'verification' -and $workflow.verifier -and -not $verOutcome) { Get-AgentStatus ([string]$workflow.verifier.name) } else { $null }
+    if ($verifierRuntimeStatus -in @('done','blocked','error')) { $unproductiveVerifierTicks++ } else { $unproductiveVerifierTicks=0 }
+    if ($unproductiveVerifierTicks -ge 2 -and [string]$workflow.verifier.kind -eq 'opencode') {
+      $fallback = Start-VerificationFallback $workflow "terminal_status=$verifierRuntimeStatus without outcome"
+      Save-State $workflow 'verifying' 'verification'
+      Append-Event 'verification_fallback_started' @{from='opencode';to='codex';reason=$verifierRuntimeStatus;agent=$fallback}
+      Notify "Herdr: OpenCode 验收交付失败，已降级到 Codex" ([string]$workflow.verifier.result) 'request'
+      $unproductiveVerifierTicks=0
+      continue
+    }    if ($missingTaskTicks -ge 10 -or $missingVerifierTicks -ge 10) {
       $missingRole=if($missingTaskTicks -ge 10){'task'}else{'verification'}; Save-State $workflow 'blocked' ''; Append-Event 'workflow_blocked' @{reason='agent_unavailable';role=$missingRole}; Notify "Herdr: $missingRole Agent 不可用，工作流已阻塞" $workflowPath 'request'; break
     }
     if ($taskOutcome -and $taskOutcome.state -eq 'blocked') {

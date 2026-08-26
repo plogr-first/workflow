@@ -321,7 +321,9 @@ Do not report completion only in the TUI.
   try {
     $paneList = (Invoke-HerdrJson @('pane','list')).json
     $paneCount = if ($paneList.result.panes) { $paneList.result.panes.Count } else { 0 }
-    if ($paneCount -ge 4) {
+    # External PowerShell callers have no HERDR_PANE_ID, so --current cannot be resolved reliably.
+    # A dedicated tab produces a fresh shell for the agent.
+    if ($paneCount -ge 4 -or [string]::IsNullOrWhiteSpace([string]$env:HERDR_PANE_ID)) {
       $tabResult = (Invoke-HerdrJson @('tab','create','--cwd',$project)).json
       $pane = [string]$tabResult.result.root_pane.pane_id
     } else {

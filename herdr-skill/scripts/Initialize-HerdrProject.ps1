@@ -441,18 +441,32 @@ Load only the skill matching the active task:
 Do not load all skills at once. After loading a skill, read its ``references/`` files only when the current phase requires them. Do not load unrelated role skills.
 "@
 
+  # Deploy the workflow's own project instructions. Existing project rules are
+  # preserved verbatim; the managed Plogr block is appended exactly once.
+  $templateDir = Join-Path $PSScriptRoot '..\templates'
+  $agentsTemplate = Join-Path $templateDir 'AGENTS.workflow.md'
+  $claudeTemplate = Join-Path $templateDir 'CLAUDE.workflow.md'
+  function Install-WorkflowInstructionFile([string]$Path, [string]$TemplatePath, [string]$Fallback) {
+    $managed = if (Test-Path -LiteralPath $TemplatePath) { Get-Content -LiteralPath $TemplatePath -Raw } else { $Fallback }
+    $marker = '<!-- plogr-workflow:managed -->'
+    if (-not (Test-Path -LiteralPath $Path)) {
+      Set-Content -LiteralPath $Path -Value $managed -Encoding utf8
+      return 'created'
+    }
+    $existing = Get-Content -LiteralPath $Path -Raw
+    # A pre-marker copy of the canonical template is treated as already present.
+    $legacy = $managed.Replace($marker + [Environment]::NewLine, '').Trim()
+    if ($existing -notmatch [regex]::Escape($marker) -and -not $existing.Contains($legacy)) {
+      Add-Content -LiteralPath $Path -Value ("`r`n`r`n" + $managed) -Encoding utf8
+      return 'appended'
+    }
+    return 'present'
+  }
   $agentsMdPath = Join-Path $Project 'AGENTS.md'
-  if (-not (Test-Path -LiteralPath $agentsMdPath)) {
-    Write-Host "Deploying progressive disclosure index: AGENTS.md..." -ForegroundColor Cyan
-    Set-Content -LiteralPath $agentsMdPath -Value $indexContent -Encoding utf8
-  }
-
   $claudeMdPath = Join-Path $Project 'CLAUDE.md'
-  if (-not (Test-Path -LiteralPath $claudeMdPath)) {
-    Write-Host "Deploying progressive disclosure index: CLAUDE.md..." -ForegroundColor Cyan
-    Set-Content -LiteralPath $claudeMdPath -Value $indexContent -Encoding utf8
-  }
-
+  $agentsState = Install-WorkflowInstructionFile $agentsMdPath $agentsTemplate $indexContent
+  $claudeState = Install-WorkflowInstructionFile $claudeMdPath $claudeTemplate $indexContent
+  Write-Host "Workflow instructions: AGENTS.md=$agentsState, CLAUDE.md=$claudeState" -ForegroundColor Cyan
   # 2. Deploy bundled progressive skills & audit-suite
   $bundledSkillsDir = Join-Path $PSScriptRoot '..\bundled_skills'
   $workflowSkillsDir = Join-Path (Split-Path (Split-Path $PSScriptRoot)) '.agents\skills'

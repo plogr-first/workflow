@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
   [string]$ProjectRoot = (Get-Location).Path,
   [string]$RootCauseKind,
@@ -394,8 +394,7 @@ function Select-HerdrSession([string]$Requested) {
 
 function Install-HerdrSkills([string]$Project, [string[]]$TargetAgents, [bool]$SkipInstall) {
   if ($SkipInstall) {
-    Write-Host "Skipped skills installation by request." -ForegroundColor DarkGray
-    return
+    Write-Host "Skipped external engineering-skill acquisition; deploying bundled workflow skills and registry." -ForegroundColor DarkGray
   }
 
   $agentArgs = if ($null -ne $TargetAgents) {

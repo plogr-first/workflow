@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["state", "reviewed_candidate_commit", "issues", "checks"],
+  "properties": {
+    "state": {"type": "string", "enum": ["merged", "fix_required", "blocked"]},
+    "reviewed_candidate_commit": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+    "issues": {"type": "object", "required": ["total", "done", "deferred", "missing"]},
+    "checks": {"type": "array"}
+  }
+}

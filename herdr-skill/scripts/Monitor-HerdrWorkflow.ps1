@@ -1,8 +1,10 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$WorkflowPath,
   [int]$PollSeconds = 5,
   [int]$TimeoutMinutes = 240,
+  [int]$MaxAgentProcesses = 12,
+  [int]$MaxMemoryMB = 6144,
   [switch]$Once
 )
 $ErrorActionPreference = 'Stop'
@@ -11,6 +13,16 @@ $workflowPath = (Resolve-Path -LiteralPath $WorkflowPath).Path
 $workflowDir = Split-Path -Parent $workflowPath
 $eventsPath = Join-Path $workflowDir 'events.jsonl'
 $lockPath = Join-Path $workflowDir 'workflow.lock'
+$resourceGuardPath = Join-Path $PSScriptRoot 'ResourceGuard.ps1'
+if (Test-Path -LiteralPath $resourceGuardPath) { . $resourceGuardPath }
+function Write-WorkflowHeartbeat([string]$Phase, $Workflow) {
+  $heartbeat = [ordered]@{ at=(Get-Date -Format o); phase=$Phase; workflow_id=[string]$Workflow.workflow_id; state=[string]$Workflow.state; next_role=[string]$Workflow.next_role; pid=$PID }
+  Write-AtomicJson $heartbeat (Join-Path $workflowDir 'heartbeat.json')
+}
+function Write-ResumeManifest([string]$Reason, $Workflow) {
+  $resume = [ordered]@{ schema_version=1; at=(Get-Date -Format o); reason=$Reason; workflow_id=[string]$Workflow.workflow_id; project_root=[string]$Workflow.project_root; state='recovering'; next_role=[string]$Workflow.next_role; suggested_command="herdr resume $([string]$Workflow.workflow_id)" }
+  Write-AtomicJson $resume (Join-Path $workflowDir 'resume.json')
+}
 function Read-Workflow { Get-Content -LiteralPath $workflowPath -Raw | ConvertFrom-Json }
 function Invoke-GitCapture([string[]]$Arguments) {
   $previousPreference = $ErrorActionPreference
@@ -285,6 +297,17 @@ try {
   $missingTaskTicks=0; $missingVerifierTicks=0; $missingMatrixTicks=0
   do {
     Renew-Lease; $workflow = Read-Workflow
+    Write-WorkflowHeartbeat 'monitoring' $workflow
+    if (Get-Command Write-WorkflowResourceSnapshot -ErrorAction SilentlyContinue) {
+      $resourceBudget = Write-WorkflowResourceSnapshot -WorkflowDirectory $workflowDir -MaxAgentProcesses $MaxAgentProcesses -MaxMemoryMB $MaxMemoryMB
+      if (-not $resourceBudget.ok) {
+        Save-State $workflow 'recovering' ([string]$workflow.next_role)
+        Write-ResumeManifest 'resource_budget_exceeded' $workflow
+        Append-Event 'workflow_recovering' @{reason='resource_budget_exceeded';detail=($resourceBudget.reasons -join '; ')}
+        Notify 'Herdr: 工作流资源预算已满，已进入可恢复状态' $workflowPath 'request'
+        break
+      }
+    }
     if (-not $workflow.last_processed) {
       $workflow | Add-Member -Force -NotePropertyName last_processed -NotePropertyValue ([ordered]@{ task_outcome_hash = $null; verifier_outcome_hash = $null })
     }
@@ -501,9 +524,8 @@ try {
     if ($Once) { break }
     Start-Sleep -Seconds $PollSeconds
   } while ((Get-Date) -lt $deadline)
-  if ((Get-Date) -ge $deadline -and -not (@('merged','passed','blocked') -contains [string](Read-Workflow).state)) { $workflow=Read-Workflow;Save-State $workflow 'blocked' '';Append-Event 'workflow_timeout' @{};Notify 'Herdr: 工作流超时' $workflowPath 'request' }
+  if ((Get-Date) -ge $deadline -and -not (@('merged','passed','blocked','recovering') -contains [string](Read-Workflow).state)) { $workflow=Read-Workflow;Save-State $workflow 'recovering' ([string]$workflow.next_role); Write-ResumeManifest 'monitor_timeout' $workflow; Append-Event 'workflow_timeout_recoverable' @{}; Notify 'Herdr: 工作流超时，已记录恢复清单' $workflowPath 'request' }
 } catch {
   try { $failed=Read-Workflow; $failed | Add-Member -Force -NotePropertyName blocked_reason -NotePropertyValue $_.Exception.Message; Save-State $failed 'blocked' ''; Append-Event 'workflow_blocked' @{reason='controller_error'}; Notify 'Herdr: 工作流控制器异常，已阻塞' $workflowPath 'request' } catch { }
   throw
 } finally { Release-Lease }
-

@@ -19,7 +19,8 @@
     "skills/",
     "references/",
     "agents/",
-    "SKILL.md"
+    "SKILL.md",
+    "schemas/"
   ],
   "keywords": [
     "plogr",

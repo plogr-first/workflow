@@ -17,6 +17,7 @@
  *   plogr bugfix [prompt]        # Dispatch a bugfix workflow
  *   plogr parallel [matrix.json] # Dispatch a matrix parallel worktree workflow
  *   plogr prune                  # Auto-prune and clean up merged/stale worktrees
+ *   plogr resume [workflow-id]   # Resume a durable recovering workflow
  *   plogr attach [session]       # Attach to a specific Herdr session
  *   plogr [herdr-command...]     # Pass through directly to herdr CLI
  */
@@ -728,7 +729,7 @@ function getActiveWorktrees(projectRoot) {
         } else if (e.isFile() && e.name === "workflow.json") {
           try {
             const wf = JSON.parse(fs.readFileSync(full, "utf8"));
-            if (["executing", "candidate", "verifying", "repairing"].includes(wf.state)) {
+            if (["executing", "candidate", "verifying", "repairing", "recovering"].includes(wf.state)) {
               if (wf.task?.worktree_path) {
                 active.add(path.resolve(wf.task.worktree_path).toLowerCase());
               }
@@ -751,6 +752,18 @@ function getActiveWorktrees(projectRoot) {
   return active;
 }
 
+// 4.5 Durable recovery (`plogr resume [workflow-id]`)
+if (firstArg === 'resume') {
+  const psHost = findPowerShell();
+  const resumeScript = path.join(scriptsDir, 'Resume-HerdrWorkflows.ps1');
+  const profile = getProjectProfile();
+  const psArgs = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resumeScript, '-ProjectRoot', process.cwd()];
+  if (cliArgs[1]) psArgs.push('-WorkflowId', cliArgs[1]);
+  if (profile?.herdr_session?.name) psArgs.push('-SessionName', profile.herdr_session.name);
+  const child = spawn(psHost, psArgs, { stdio: 'inherit', windowsHide: false, env: { ...process.env, HERDR_ENV: '1' } });
+  child.on('exit', (code) => process.exit(code ?? 0));
+  return;
+}
 // 5. Prune Worktrees Subcommand (`plogr prune`)
 if (firstArg === 'prune') {
   const projectRoot = process.cwd();

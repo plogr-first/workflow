@@ -93,6 +93,20 @@ function Start-AgentWhenPaneReady([string]$Pane,[string[]]$NativeArgs) {
   } while ((Get-Date) -lt $deadline)
   throw "New pane $Pane did not become an available shell within 45 seconds."
 }
+function Ensure-WindowsAgentShim([string]$Project,[string]$AgentKind,[string]$Executable,[string]$Pane) {
+  if ($env:OS -ne 'Windows_NT' -or $AgentKind -ne 'opencode') { return }
+  $exe = if ($Executable) { $Executable } else { (Get-Command opencode.cmd -ErrorAction SilentlyContinue).Source }
+  if (-not $exe -or -not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'OpenCode Windows executable (.cmd) was not found.' }
+  $shimDir = Join-Path $Project '.herdr-bin'
+  New-Item -ItemType Directory -Force -Path $shimDir | Out-Null
+  $shim = Join-Path $shimDir 'opencode.cmd'
+  $shimContent = '@echo off' + [Environment]::NewLine + 'call "' + $exe + '" %*' + [Environment]::NewLine
+  Set-Content -LiteralPath $shim -Encoding ascii -Value $shimContent
+  $pathCommand = '$env:PATH = "' + $shimDir.Replace('"','`"') + ';$env:PATH"'
+  & herdr --session $script:HerdrSession pane send-text $Pane $pathCommand 2>$null | Out-Null
+  & herdr --session $script:HerdrSession pane send-keys $Pane enter 2>$null | Out-Null
+  Start-Sleep -Milliseconds 300
+}
 if ($env:HERDR_ENV -ne '1') { throw 'HERDR_ENV is not 1. Run this from a Herdr-managed pane.' }
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $profileNativeArgs = @()
@@ -333,6 +347,7 @@ Do not report completion only in the TUI.
   if (-not $pane) { throw 'Herdr did not return a pane ID.' }
   # Wait for the newly split PowerShell pane to reach its interactive prompt before agent start.
   Start-Sleep -Seconds 5
+  Ensure-WindowsAgentShim $project $Kind ([string]$entry.executable) $pane
   $agent=Start-AgentWhenPaneReady $pane $nativeArgs
   if(-not $agent -or $agent.agent -ne $Kind -or -not $agent.interactive_ready){throw 'Herdr did not return a confirmed interactive agent.'}
   $status=[ordered]@{name=$Name;kind=$Kind;access=$Access;model=$OpenCodeModel;profile=$Profile;deferred=[bool]$DeferActivation;pane_id=$pane;session_name=$script:HerdrSession;started_at=(Get-Date -Format o);brief_path=$briefPath;result_path=$resultPath;outcome_path=$outcomePath;progress_path=$progressPath;start_result=$agent}

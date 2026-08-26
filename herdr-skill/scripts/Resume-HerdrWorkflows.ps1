@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
   [string]$WorkflowId,
   [string]$ProjectRoot = (Get-Location).Path,
@@ -26,7 +26,7 @@ if ($items.Count -gt 1 -and -not $All) {
 function Save-Workflow($Workflow,[string]$Path) { $tmp="$Path.$([guid]::NewGuid().ToString('N')).tmp"; $Workflow.updated_at=(Get-Date -Format o); $Workflow|ConvertTo-Json -Depth 20|Set-Content $tmp -Encoding utf8; Move-Item $tmp $Path -Force }
 function Event([string]$Path,[string]$Name,[hashtable]$Fields=@{}) { $e=[ordered]@{at=(Get-Date -Format o);event=$Name};foreach($k in $Fields.Keys){$e[$k]=$Fields[$k]};($e|ConvertTo-Json -Compress)|Add-Content (Join-Path (Split-Path $Path) 'events.jsonl') -Encoding utf8 }
 function Agent-Live([string]$Name) {
-  try { $old=$ErrorActionPreference; $ErrorActionPreference='Continue'; $raw=@(& herdr --session $session agent get $Name 2>$null); $code=$LASTEXITCODE; $ErrorActionPreference=$old; if($code -ne 0 -or -not $raw){return $false}; $agent=(($raw -join "`n")|ConvertFrom-Json).result.agent; return ([string]$agent.agent_status -in @('working','running','planning','awaiting_input')) } catch { $ErrorActionPreference=$old; return $false }
+  try { $old=$ErrorActionPreference; $ErrorActionPreference='Continue'; $raw=@(& herdr --session $session agent get $Name 2>$null); $code=$LASTEXITCODE; $ErrorActionPreference=$old; if($code -ne 0 -or -not $raw){return $false}; $agent=(($raw -join "`n")|ConvertFrom-Json).result.agent; return ([string]$agent.agent_status -in @('working','running','planning','awaiting_input','idle')) } catch { $ErrorActionPreference=$old; return $false }
 }
 function Ensure-MatrixAgents($Workflow,[string]$WorkflowPath) {
   if (-not $Workflow.matrix) { return }

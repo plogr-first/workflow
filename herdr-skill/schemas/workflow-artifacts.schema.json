@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Durable workflow artifact envelope",
+  "type": "object",
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": {"type": "integer", "minimum": 1},
+    "state": {"type": "string", "enum": ["working", "done", "candidate", "merged", "fix_required", "blocked"]},
+    "issue_id": {"type": "string", "minLength": 1},
+    "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+    "worktree": {"type": "string", "minLength": 1},
+    "branch": {"type": "string", "minLength": 1},
+    "evidence": {"type": "object"}
+  },
+  "additionalProperties": true
+}

@@ -107,7 +107,7 @@ function Ensure-WindowsAgentShim([string]$Project,[string]$AgentKind,[string]$Ex
   & herdr --session $script:HerdrSession pane send-keys $Pane enter 2>$null | Out-Null
   Start-Sleep -Milliseconds 300
 }
-if ($env:HERDR_ENV -ne '1') { throw 'HERDR_ENV is not 1. Run this from a Herdr-managed pane.' }
+if ($env:HERDR_ENV -ne '1' -and [string]::IsNullOrWhiteSpace($SessionName)) { throw 'HERDR_ENV is not 1. Run from a Herdr-managed pane or provide the bound -SessionName.' }
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $profileNativeArgs = @()
 $script:HerdrSession = if($SessionName){ $SessionName } else { $null }

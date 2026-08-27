@@ -200,6 +200,7 @@ $ghGuideline = "GitHub Operations: For any GitHub-related operations (creating P
 function Get-PitfallsWarnings([string]$Project, [string]$PromptText) {
   $pitfallsFiles = @(
     (Join-Path $Project '.agents\skills\knowledge\pitfalls.jsonl'),
+    (Join-Path $Project '.agents\skills\audit-suite\knowledge\pitfalls.jsonl'),
     (Join-Path $Project '.knowledge\pitfalls.jsonl'),
     (Join-Path $env:USERPROFILE '.agents\skills\audit-suite\knowledge\pitfalls.jsonl')
   )

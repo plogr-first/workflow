@@ -887,9 +887,9 @@ $profile = [ordered]@{
   mattpocock_skills = $mattpockSkills
   knowledge_retrieval = [ordered]@{
     enabled = $false
-    provider = 'ollama'
-    endpoint = 'http://127.0.0.1:11434'
-    model = 'nomic-embed-text'
+    provider = $null
+    endpoint = $null
+    model = $null
     index = '.knowledge/index/semantic-index.json'
   }
   git = $git

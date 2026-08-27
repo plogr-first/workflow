@@ -1,11 +1,7 @@
 ﻿# Provider contract
 
-Default provider is Ollama at `http://127.0.0.1:11434`, model `nomic-embed-text`.
+# Provider contract
 
-Install and prepare once:
+The project supplies an embedding endpoint and model in its own profile. The Skill does not install, start, or select a provider. The endpoint must expose a JSON embedding operation and return a numeric vector.
 
-```powershell
-ollama pull nomic-embed-text
-```
-
-The scripts call `POST /api/embed` and require a numeric embedding vector. If the service, model, or response is unavailable, they return a structured `unavailable` result. They do not use lexical or keyword fallback.
+`Build-KnowledgeIndex.ps1` accepts `-Endpoint` and `-Model` explicitly. `Search-Knowledge.ps1` reads the values persisted in the index. If they are missing or unavailable, the scripts return `unavailable`; they never use lexical or keyword fallback.

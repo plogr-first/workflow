@@ -39,15 +39,14 @@ plogr hud                          # 实时 HUD
 
 ## 语义知识检索（可选）
 
-项目初始化默认关闭 embedding 检索。启用 Ollama 后：
+项目初始化默认关闭 embedding 检索。启用时由项目自行提供 embedding provider：
 
 ```powershell
-ollama pull nomic-embed-text
-& .agents/skills/knowledge-retrieval/scripts/Build-KnowledgeIndex.ps1
+& .agents/skills/knowledge-retrieval/scripts/Build-KnowledgeIndex.ps1 -Endpoint $env:EMBEDDING_ENDPOINT -Model $env:EMBEDDING_MODEL
 & .agents/skills/knowledge-retrieval/scripts/Search-Knowledge.ps1 -Context "当前任务描述"
 ```
 
-配置位于 `herdr/dispatch-profile.json` 的 `knowledge_retrieval` 节点。索引不存在或 embedding 服务不可用时会明确返回 `unavailable`，不会退化为关键词匹配。
+配置位于 `herdr/dispatch-profile.json` 的 `knowledge_retrieval` 节点。索引不存在或 embedding 服务不可用时会明确返回 `unavailable`，不会退化为关键词匹配；本包不安装或依赖 Ollama。
 
 ## 发布与迭代
 

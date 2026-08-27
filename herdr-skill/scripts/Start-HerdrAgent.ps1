@@ -197,39 +197,27 @@ function Get-AgentSpecificSkillPath([string]$ProjectRoot, [string]$SkillName, [s
 $skillsSection = ""
 $gitContract = if($gitProfile -and $gitProfile.repository -and -not $gitProfile.has_commit){'Git was initialized but has no baseline commit. For task/bugfix, do not edit or claim candidate: write outcome state blocked and explain that the user must review and create the initial baseline commit first.'}else{'Git baseline status permits normal task/bugfix execution; preserve unrelated changes.'}
 $ghGuideline = "GitHub Operations: For any GitHub-related operations (creating PRs, inspecting PRs/issues, checking GitHub Actions/CI runs, or viewing diffs), always use the GitHub CLI (`gh`) tool (e.g. `gh pr create`, `gh pr checks`, `gh issue view`, `gh run list`) rather than manual browser steps or unauthenticated git commands."
-function Get-PitfallsWarnings([string]$Project, [string]$PromptText) {
-  $pitfallsFiles = @(
-    (Join-Path $Project '.agents\skills\knowledge\pitfalls.jsonl'),
-    (Join-Path $Project '.agents\skills\audit-suite\knowledge\pitfalls.jsonl'),
-    (Join-Path $Project '.knowledge\pitfalls.jsonl'),
-    (Join-Path $env:USERPROFILE '.agents\skills\audit-suite\knowledge\pitfalls.jsonl')
-  )
-  $rules = @()
-  foreach ($pf in $pitfallsFiles) {
-    if (Test-Path -LiteralPath $pf) {
-      try {
-        $lines = Get-Content -LiteralPath $pf | Where-Object { $_ -and $_.Trim() }
-        foreach ($line in $lines) {
-          $entry = $line | ConvertFrom-Json
-          if ($entry.golden_rule) {
-            $rules += "- **[$($entry.category)]** $($entry.golden_rule) *(历史坑点: $($entry.symptom))*"
-          }
-        }
-      } catch {}
+function Get-KnowledgeRetrievalSection([string]$Project, [string]$PromptText, $DispatchProfile) {
+  $skill = Join-Path $Project '.agents\skills\knowledge-retrieval\scripts\Search-Knowledge.ps1'
+  if (-not $DispatchProfile -or -not $DispatchProfile.knowledge_retrieval -or -not $DispatchProfile.knowledge_retrieval.enabled) {
+    return "`n## Project knowledge`nSemantic knowledge retrieval: disabled by dispatch profile."
+  }
+  if (-not (Test-Path -LiteralPath $skill -PathType Leaf)) {
+    return "`n## Project knowledge`nSemantic knowledge retrieval: unavailable (registered skill payload is missing)."
+  }
+  try {
+    $result = & $skill -ProjectRoot $Project -Context $Prompt -Top 5 | ConvertFrom-Json
+    if ($result.status -eq 'ready') {
+      $hits = @($result.hits | ForEach-Object { "- id=$($_.knowledge_id); source=$($_.source); score=$($_.score)" })
+      return "`n## Project knowledge`nSemantic retrieval is ready. Load the `knowledge-retrieval` skill and read only the cited source files:`n$($hits -join "`n")"
     }
+    return "`n## Project knowledge`nSemantic knowledge retrieval: $($result.status) ($($result.reason)). Record this state; do not use keyword fallback."
+  } catch {
+    return "`n## Project knowledge`nSemantic knowledge retrieval: unavailable ($($_.Exception.Message)). Record this state; do not use keyword fallback."
   }
-  if ($rules.Count -gt 0) {
-    $dedup = @($rules | Select-Object -Unique | Select-Object -First 5)
-    return @"
-
-## ⚠️ 历史踩坑防护预警 (Project Pitfalls & Golden Rules)
-$($dedup -join "`n")
-"@
-  }
-  return ""
 }
 
-$pitfallsSection = Get-PitfallsWarnings $project $Prompt
+$knowledgeSection = Get-KnowledgeRetrievalSection $project $Prompt $dispatchProfile
 
 $roleContract = switch ($Profile) {
   'research' { @"
@@ -288,7 +276,7 @@ try {
 
 ## Task
 $Prompt
-$pitfallsSection
+$knowledgeSection
 ## Workflow role contract
 $roleContract
 

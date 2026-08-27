@@ -23,5 +23,7 @@ Load only the skill matching the active task:
 - Bug diagnosis or repair: [Bugfix Agent](./.agents/skills/bugfix-agent/SKILL.md)
 - Read-only investigation: [Research Agent](./.agents/skills/research-agent/SKILL.md)
 - Candidate validation or integration: [Verification Agent](./.agents/skills/verification-agent/SKILL.md)
+- Knowledge retrieval: [Knowledge Retrieval](./.agents/skills/knowledge-retrieval/SKILL.md)
 
 Do not load all skills at once. After loading a skill, read its `references/` files only when the current phase requires them. Do not load unrelated role skills.
+

@@ -1,0 +1,4 @@
+interface:
+  display_name: Knowledge Retrieval
+  short_description: Semantic retrieval for workflow knowledge
+  default_prompt: Use $knowledge-retrieval to retrieve relevant project knowledge before acting.

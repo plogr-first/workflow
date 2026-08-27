@@ -471,7 +471,7 @@ Do not load all skills at once. After loading a skill, read its ``references/`` 
   $bundledSkillsDir = Join-Path $PSScriptRoot '..\bundled_skills'
   $workflowSkillsDir = Join-Path (Split-Path (Split-Path $PSScriptRoot)) '.agents\skills'
 
-  $skillNames = @('plogr', 'herdr', 'karpathy-guidelines', 'task-agent', 'bugfix-agent', 'research-agent', 'verification-agent', 'audit-suite')
+  $skillNames = @('plogr', 'herdr', 'karpathy-guidelines', 'task-agent', 'bugfix-agent', 'research-agent', 'verification-agent', 'audit-suite', 'knowledge-retrieval')
   $excludedPayloadNames = @('node_modules', '.git', 'tests_formal_audit')
   function Copy-SkillPayload([string]$Source, [string]$Destination) {
     # Core skill destinations are managed deployment targets. Recreate them so
@@ -623,7 +623,7 @@ function Get-MattpockSkills([string]$Project) {
   # Check progressive workflow skills & audit-suite
   $bundledSkillsDir = Join-Path $PSScriptRoot '..\bundled_skills'
   $workflowSkillsDir = Join-Path (Split-Path (Split-Path $PSScriptRoot)) '.agents\skills'
-  $progressiveSkills = @('karpathy-guidelines', 'task-agent', 'bugfix-agent', 'research-agent', 'verification-agent', 'audit-suite')
+  $progressiveSkills = @('karpathy-guidelines', 'task-agent', 'bugfix-agent', 'research-agent', 'verification-agent', 'audit-suite', 'knowledge-retrieval')
   $auditRoots = $roots + @($bundledSkillsDir, $workflowSkillsDir)
   foreach ($ws in $progressiveSkills) {
     $wsCandidates = @($auditRoots | ForEach-Object { Join-Path $_ "$ws\SKILL.md" } | Where-Object { Test-Path -LiteralPath $_ })
@@ -885,6 +885,13 @@ $profile = [ordered]@{
   project_skill_registry = '.agents/project-skills.json'
   project_skill_registry_required = $true
   mattpocock_skills = $mattpockSkills
+  knowledge_retrieval = [ordered]@{
+    enabled = $false
+    provider = 'ollama'
+    endpoint = 'http://127.0.0.1:11434'
+    model = 'nomic-embed-text'
+    index = '.knowledge/index/semantic-index.json'
+  }
   git = $git
   skills_install_command = 'plogr init'
 }
@@ -904,3 +911,4 @@ Write-Host "  Skill Target:     $(if($targetAgents){$targetAgents -join ', '}els
 Write-Host "  Global Command:   已自动挂载! 之后在任意终端输入 plogr 即可直接浮现 Herdr 复合终端" -ForegroundColor Green
 Write-Host "  Live HUD:         plogr hud (开启 24-bit 炫彩流光实时看板)" -ForegroundColor Cyan
 Write-Host ""
+

@@ -1,0 +1,8 @@
+[CmdletBinding()]
+param([string]$ProjectRoot=(Get-Location).Path,[string]$Endpoint='http://127.0.0.1:11434',[string]$Model='nomic-embed-text')
+$ErrorActionPreference='Stop'
+$project=(Resolve-Path -LiteralPath $ProjectRoot).Path; $knowledge=Join-Path $project '.knowledge'; $indexDir=Join-Path $knowledge 'index'; New-Item -ItemType Directory -Force -Path $indexDir|Out-Null
+$files=@(); foreach($pattern in @('cards\*.md','pitfalls.md')){ $files += @(Get-ChildItem -LiteralPath $knowledge -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like (Join-Path $knowledge "*$($pattern -replace '\\','*')") }) }; $files=@($files|Sort-Object FullName -Unique)
+function Embed([string]$Text){$body=@{model=$Model;input=$Text}|ConvertTo-Json -Compress; $r=Invoke-RestMethod -Uri "$Endpoint/api/embed" -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 30; $v=@($r.embeddings[0]);if(-not $v.Count){throw 'embedding response has no vector'};return $v}
+$entries=@();foreach($f in $files){$text=Get-Content $f.FullName -Raw;if([string]::IsNullOrWhiteSpace($text)){continue};$entries += [ordered]@{id=([guid]::NewGuid().ToString('N'));source=$f.FullName.Substring($project.Length).TrimStart('\');content_sha256=(Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant();embedding=(Embed $text);indexed_at=(Get-Date -Format o)}}
+$index=[ordered]@{schema_version=1;provider='ollama';endpoint=$Endpoint;model=$Model;project_root=$project;entries=$entries;built_at=(Get-Date -Format o)};$path=Join-Path $indexDir 'semantic-index.json';$index|ConvertTo-Json -Depth 10|Set-Content $path -Encoding utf8;[ordered]@{status='ready';index=$path;entries=$entries.Count;model=$Model}|ConvertTo-Json -Compress

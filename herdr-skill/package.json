@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "description": "Initialize Herdr multi-agent workflow projects — zero-collision AI orchestration by Plogr",
   "bin": {
-    "plogr": "./bin/cli.js",
-    "plogr-workflow": "./bin/cli.js"
+    "plogr": "bin/cli.js",
+    "plogr-workflow": "bin/cli.js"
   },
   "scripts": {
     "test": "npm run test:formal",
@@ -42,7 +42,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/plogr-first/workflow.git",
+    "url": "git+https://github.com/plogr-first/workflow.git",
     "directory": "herdr-skill"
   },
   "engines": {

@@ -1,4 +1,4 @@
-<!-- plogr-workflow:managed -->
+﻿<!-- plogr-workflow:managed -->
 # Agent Skills
 
 This file is a progressive-disclosure skill index.

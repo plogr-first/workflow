@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [string]$ProjectRoot = (Get-Location).Path,
   [string]$RootCauseKind,

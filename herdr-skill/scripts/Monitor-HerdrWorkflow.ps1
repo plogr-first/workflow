@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$WorkflowPath,
   [int]$PollSeconds = 5,
@@ -490,7 +490,7 @@ try {
         break
       }
       $msg="Wake-up: you are the configured $expectedVerifierKind verification agent. Read $($workflow.task.result), $taskOutcomePath and the configured official mattpocock /code-review skill, fixed at the candidate base SHA. Verify API docs/OpenAPI, backend routes/validation, generated client/types, and actual endpoint behavior when applicable. Write $($workflow.verifier.result), verification.md, and $verOutcomePath. Use merged only after safe merge and post-merge checks; use fix_required only for reproducible P0/P1 blockers."
-      Prompt-Agent ([string]$workflow.verifier.name) $msg $workflow.verifier; $workflow.last_processed.task_outcome_hash=$taskHash; Save-State $workflow 'verifying' 'verification'; Append-Event 'verification_woken' @{agent=$workflow.verifier.name}; Notify "Herdr: $($workflow.verifier.name) 已唤醒验收" ([string]$workflow.verifier.result)
+      Prompt-Agent ([string]$workflow.verifier.name) $msg $workflow.verifier; $workflow.last_processed.task_outcome_hash=$taskHash; Save-State $workflow 'verifying' 'verification'; Append-Event 'verification_woken' @{agent=$workflow.verifier.name}; Notify "Herdr: $($workflow.verifier.name) 已唤醒验收" ([string]$workflow.verifier.result) 'request'
     } elseif ($workflow.next_role -eq 'task' -and $taskOutcome -and ($taskOutcome.state -eq 'candidate' -or ($workflow.mode -eq 'research' -and $taskOutcome.state -eq 'passed')) -and @('executing','repairing') -contains [string]$workflow.state) {
       Save-State $workflow 'candidate' 'verification'
     }

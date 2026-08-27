@@ -1,4 +1,4 @@
----
+﻿---
 name: knowledge-retrieval
 description: Semantic project knowledge retrieval using a configured embedding provider. Use when a workflow agent needs prior project decisions, pitfalls, case cards, architecture knowledge, or evidence from .knowledge. Requires a working embedding provider; never substitute keyword matching for semantic retrieval.
 ---

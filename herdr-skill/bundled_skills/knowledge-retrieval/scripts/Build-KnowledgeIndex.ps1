@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([string]$ProjectRoot=(Get-Location).Path,[string]$Endpoint='http://127.0.0.1:11434',[string]$Model='nomic-embed-text')
 $ErrorActionPreference='Stop'
 $project=(Resolve-Path -LiteralPath $ProjectRoot).Path; $knowledge=Join-Path $project '.knowledge'; $indexDir=Join-Path $knowledge 'index'; New-Item -ItemType Directory -Force -Path $indexDir|Out-Null

@@ -1,6 +1,6 @@
 {
   "name": "plogr-workflow",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Initialize Herdr multi-agent workflow projects — zero-collision AI orchestration by Plogr",
   "bin": {
     "plogr": "bin/cli.js",

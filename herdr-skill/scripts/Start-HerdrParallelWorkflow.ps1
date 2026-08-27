@@ -37,6 +37,13 @@ $matrix = $MatrixJson | ConvertFrom-Json
 if (-not $matrix -or $matrix.Count -lt 1) {
   throw "Matrix must contain at least 1 parallel task definition."
 }
+$matrixIds = @()
+foreach ($item in @($matrix)) {
+  $id = [string]$item.id
+  if ($id -notmatch '^[a-z0-9]+(?:-[a-z0-9]+)*$') { throw "Matrix item id '$id' is invalid; use lowercase letters, digits, and hyphens." }
+  if ($matrixIds -contains $id) { throw "Matrix contains duplicate item id '$id'." }
+  $matrixIds += $id
+}
 
 # Verify Git baseline
 $isGit = (& git -C $project rev-parse --is-inside-work-tree 2>&1)
@@ -141,6 +148,7 @@ foreach ($sub in $matrix) {
 
   # Launch agent in its own isolated worktree
   $agentName = "wf-$subSlug-$subAgentKind"
+  if ($agentName.Length -gt 32) { $agentName = $agentName.Substring(0,32).TrimEnd('-') }
   $fullPrompt = @"
 [PARALLEL SUBTASK: $subId]
 Scope: $subScope
@@ -219,6 +227,9 @@ $masterWf.state = 'executing'
 $masterWf.matrix = $matrixItems
 $masterWf.verifier = [ordered]@{
     name = $verifierName
+    kind = [string]$profile.verification_agent.kind
+    status = if ($verObj) { $verObj.status } else { $null }
+    pane_id = if ($verObj) { $verObj.pane_id } else { $null }
     original_agent_name = $verifierName
     active_agent_name = $verifierName
     handoff = $verifierHandoff

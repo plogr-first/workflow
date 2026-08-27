@@ -354,9 +354,21 @@ try {
             $anyBlocked = $true
             $sub.status = 'blocked'
           } elseif ($subOutcome.state -eq 'candidate' -and $sub.status -ne 'candidate') {
-            $sub.status = 'candidate'
-            $matrixUpdated = $true
-            Append-Event 'matrix_subtask_completed' @{ subtask_id = $sub.id; branch = $sub.branch }
+            $subEvidence = $null
+            if (-not (Test-Path -LiteralPath ([string]$sub.result) -PathType Leaf)) { $subEvidence = 'missing result.md' }
+            if (-not $subEvidence -and [string]::IsNullOrWhiteSpace([string]$subOutcome.worktree_path)) { $subEvidence = 'missing worktree_path' }
+            if (-not $subEvidence -and [string]::IsNullOrWhiteSpace([string]$subOutcome.branch)) { $subEvidence = 'missing branch' }
+            if (-not $subEvidence -and [string]::IsNullOrWhiteSpace([string]$subOutcome.base_sha)) { $subEvidence = 'missing base_sha' }
+            if (-not $subEvidence -and [string]::IsNullOrWhiteSpace([string]$subOutcome.candidate_sha)) { $subEvidence = 'missing candidate_sha' }
+            if ($subEvidence) {
+              $anyBlocked = $true
+              $sub.status = 'blocked'
+              Append-Event 'matrix_invalid_candidate' @{ subtask_id = $sub.id; reason = $subEvidence }
+            } else {
+              $sub.status = 'candidate'
+              $matrixUpdated = $true
+              Append-Event 'matrix_subtask_completed' @{ subtask_id = $sub.id; branch = $sub.branch }
+            }
           }
         }
         if ($sub.status -ne 'candidate') {

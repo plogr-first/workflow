@@ -206,7 +206,7 @@ function Get-KnowledgeRetrievalSection([string]$Project, [string]$PromptText, $D
     return "`n## Project knowledge`nSemantic knowledge retrieval: unavailable (registered skill payload is missing)."
   }
   try {
-    $result = & $skill -ProjectRoot $Project -Context $Prompt -Top 5 | ConvertFrom-Json
+    $result = & $skill -ProjectRoot $Project -Context $PromptText -Top 5 | ConvertFrom-Json
     if ($result.status -eq 'ready') {
       $hits = @($result.hits | ForEach-Object { "- id=$($_.knowledge_id); source=$($_.source); score=$($_.score)" })
       return "`n## Project knowledge`nSemantic retrieval is ready. Load the `knowledge-retrieval` skill and read only the cited source files:`n$($hits -join "`n")"
